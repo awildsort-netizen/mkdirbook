@@ -1,0 +1,28 @@
+# Build output
+out/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.python-version
+
+# Manifest backup (auto-generated on corrupt manifest)
+.bookmanifest.bak
+
+# Editor & OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# uv / pip
+uv.lock
+*.egg-info/
+dist/
+build/
