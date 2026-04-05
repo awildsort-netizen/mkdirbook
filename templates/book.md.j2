@@ -1,0 +1,52 @@
+{#- book.md.j2 — Markdown output (also used as pandoc source for pdf/docx)  -#}
+{#- Each role has its own macro; override by copy-editing this file.         -#}
+
+{%- macro render_chapter(ch) -%}
+{% if ch.num is not none %}
+---
+*Chapter {{ ch.num }}*
+
+{% endif %}
+{{ ch.content_md }}
+{%- endmacro -%}
+
+{%- macro render_introduction(ch) -%}
+{{ ch.content_md }}
+{%- endmacro -%}
+
+{%- macro render_prologue(ch) -%}
+{{ ch.content_md }}
+{%- endmacro -%}
+
+{%- macro render_epilogue(ch) -%}
+{{ ch.content_md }}
+{%- endmacro -%}
+
+{%- macro render_appendix(ch) -%}
+{{ ch.content_md }}
+{%- endmacro -%}
+
+{%- macro render_default(ch) -%}
+{{ ch.content_md }}
+{%- endmacro -%}
+
+{%- macro render(ch) -%}
+{%- if ch.role == "chapter" %}{{ render_chapter(ch) -}}
+{%- elif ch.role == "introduction" %}{{ render_introduction(ch) -}}
+{%- elif ch.role == "prologue" %}{{ render_prologue(ch) -}}
+{%- elif ch.role == "epilogue" %}{{ render_epilogue(ch) -}}
+{%- elif ch.role == "appendix" %}{{ render_appendix(ch) -}}
+{%- else %}{{ render_default(ch) -}}
+{%- endif %}
+{%- endmacro -%}
+---
+title: "{{ title }}"
+date: {{ date }}
+---
+
+{% for ch in chapters %}{{ render(ch) }}
+{% if not loop.last %}
+---
+
+{% endif %}
+{%- endfor %}

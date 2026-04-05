@@ -1,0 +1,34 @@
+{
+  "title": "Newsletter",
+  "version": 1,
+  "output_dir": "out/newsletter",
+  "output_name": "newsletter",
+  "output_name_template": "{{ output_name }}",
+  "custom_templates": {},
+  "files": [
+    {
+      "path": "newsletters/crowplay.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "newsletters/dxdt.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "newsletters/narcfall.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "newsletters/twodads.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    }
+  ]
+}

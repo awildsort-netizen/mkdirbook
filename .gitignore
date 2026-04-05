@@ -9,8 +9,10 @@ __pycache__/
 venv/
 .python-version
 
-# Manifest backup (auto-generated on corrupt manifest)
-.bookmanifest.bak
+# Manifest backups (auto-generated on corrupt manifest)
+*.bak
+
+# works/ manifests are intentionally tracked (do NOT add works/ here)
 
 # Editor & OS
 .DS_Store

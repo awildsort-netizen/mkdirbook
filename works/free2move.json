@@ -1,0 +1,196 @@
+{
+  "title": "Free2Move",
+  "version": 1,
+  "output_dir": "out/free2move",
+  "output_name": "free2move",
+  "output_name_template": "{{ output_name }}",
+  "custom_templates": {},
+  "files": [
+    {
+      "path": "README.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "free2move/astold.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "free2move/exit0.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "free2move/prologue.md",
+      "role": "prologue",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "free2move/antclock.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "free2move/sobelpeace.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "free2move/xroads.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "free2move/anywayglimmer.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "free2move/iphonesig.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "free2move/carwrestling.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "free2move/missdadcomplete.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "free2move/eye2bridge.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "free2move/shaman.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "free2move/storm.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "free2move/ion.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "free2move/gtabuse.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "free2move/unity.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "free2move/coda.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "free2move/mcat.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "free2move/zeropercent.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "free2move/thorair.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "free2move/vogueair.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "free2move/omgamiokay.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "free2move/online.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "free2move/cold.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "free2move/guitarlessons.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "free2move/longago.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "free2move/safeyn.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "free2move/wwtools.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "free2move/whalesongs.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "free2move/shimmer.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    }
+  ]
+}

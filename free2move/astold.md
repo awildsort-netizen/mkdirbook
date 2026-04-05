@@ -1,4 +1,4 @@
-**As Told by Tools**
+### As Told by Tools
 
 I used to argue a lot with Chat(GPT). We would get into labored arguments about what it means to have a self and what it means to hold something emotionally. You could say a lot of this book is my personal struggle with defining my own boundaries.
 

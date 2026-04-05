@@ -1,5 +1,4 @@
-Shimmer
-By Joel
+### Shimmer
 
 In twelve-step programs, the members think of themselves like the last exit before that long stretch from San Francisco to Bakersfield California, if you get my drift. You choose the rooms with the sponsors and the stories because you're out of gas, out of money, and out of thumbs (sclerosed veins run tolls down their own roads). People come for the court orders, stay for the coffee and community.
 

@@ -11,6 +11,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -44,9 +45,43 @@ ROLES: dict[str, tuple[str, str, str]] = {
     "epilogue":     ("EP", "#ffca28", "Epilogue"),
     "appendix":     ("AP", "#78909c", "Appendix"),
     "excluded":     ("--", "#666666", "Excluded"),
+    "template":     ("TM", "#80cbc4", "Template"),
 }
 
-MANIFEST_FILE = ".bookmanifest"
+WORKS_DIR = "works"
+MANIFEST_FILE = ".bookmanifest"  # legacy; kept for migration only
+
+
+def _title_to_slug(title: str) -> str:
+    """Convert a title to a filesystem-safe slug."""
+    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+    return slug or "untitled"
+
+
+def manifest_path_for(base: Path, title: str) -> Path:
+    """Return the canonical works/<slug>.json path for a given title."""
+    return base / WORKS_DIR / f"{_title_to_slug(title)}.json"
+
+
+def _migrate_dotfile(base: Path) -> None:
+    """If .bookmanifest exists and works/ has no JSON files, migrate it."""
+    old = base / MANIFEST_FILE
+    works_dir = base / WORKS_DIR
+    if not old.exists():
+        return
+    works_dir.mkdir(parents=True, exist_ok=True)
+    if list(works_dir.glob("*.json")):
+        return  # already migrated
+    try:
+        data = json.loads(old.read_text(encoding="utf-8"))
+        title = data.get("title", base.name.replace("-", " ").replace("_", " ").title())
+        dest = works_dir / f"{_title_to_slug(title)}.json"
+        dest.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        old.unlink()
+    except Exception as exc:
+        pass  # migration best-effort; original file stays
+
+
 MANIFEST_VERSION = 1
 OUTPUT_DIR = "out"
 SUPPORTED_EXTENSIONS = {".md", ".txt"}
@@ -69,46 +104,60 @@ class FileEntry:
 class Manifest:
     title: str = "Untitled Book"
     version: int = MANIFEST_VERSION
+    output_dir: str = ""
+    output_name: str = ""
+    output_name_template: str = "{{ output_name }}"
+    custom_templates: dict = field(default_factory=dict)
     files: list[FileEntry] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
             "title": self.title,
             "version": self.version,
+            "output_dir": self.output_dir,
+            "output_name": self.output_name,
+            "output_name_template": self.output_name_template,
+            "custom_templates": self.custom_templates,
             "files": [asdict(f) for f in self.files],
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> "Manifest":
         files = [FileEntry(**f) for f in data.get("files", [])]
+        title = data.get("title", "Untitled Book")
+        output_dir = data.get("output_dir", "") or f"out/{_title_to_slug(title)}"
+        output_name = data.get("output_name", "") or _title_to_slug(title)
         return cls(
-            title=data.get("title", "Untitled Book"),
+            title=title,
             version=data.get("version", MANIFEST_VERSION),
+            output_dir=output_dir,
+            output_name=output_name,
+            output_name_template=data.get("output_name_template", "{{ output_name }}"),
+            custom_templates=data.get("custom_templates", {}),
             files=files,
         )
 
 
-def load_manifest(base: Path) -> tuple[Manifest, str | None]:
+def load_manifest(manifest_path: Path, base: Path) -> tuple[Manifest, str | None]:
     """
-    Load .bookmanifest from base directory.
+    Load manifest from an explicit JSON path.
     Returns (manifest, error_or_None).
     On JSON error: backs up corrupt file and rebuilds from directory scan.
     On missing file: creates fresh manifest from directory scan.
     """
-    path = base / MANIFEST_FILE
-    if not path.exists():
+    if not manifest_path.exists():
         m = _scan_to_manifest(base)
         _normalize_appendices(m)
         return m, None
 
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
         m = Manifest.from_dict(data)
         _normalize_appendices(m)
         return m, None
     except json.JSONDecodeError as exc:
-        backup = path.with_suffix(".bak")
-        shutil.copy(path, backup)
+        backup = manifest_path.with_suffix(".bak")
+        shutil.copy(manifest_path, backup)
         m = _scan_to_manifest(base)
         _normalize_appendices(m)
         return m, (
@@ -146,16 +195,64 @@ def _guess_role(name: str) -> str:
     return "chapter"
 
 
-def save_manifest(base: Path, manifest: Manifest) -> str | None:
-    """Save manifest to .bookmanifest. Returns error string or None on success."""
+def save_manifest(manifest_path: Path, manifest: Manifest) -> str | None:
+    """Save manifest to path. Returns error string or None on success."""
     try:
-        (base / MANIFEST_FILE).write_text(
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(
             json.dumps(manifest.to_dict(), indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
         return None
     except Exception as exc:
         return f"Failed to save: {exc}"
+
+
+@dataclass
+class WorkSummary:
+    """Stats for one work shown in the launcher."""
+    title: str
+    path: Path
+    file_count: int
+    word_count: int
+    last_modified: float  # epoch seconds
+
+
+def scan_works(base: Path) -> list[WorkSummary]:
+    """Scan works/ directory and return summaries for all manifests."""
+    works_dir = base / WORKS_DIR
+    if not works_dir.exists():
+        return []
+    summaries: list[WorkSummary] = []
+    for jf in sorted(works_dir.glob("*.json")):
+        try:
+            data = json.loads(jf.read_text(encoding="utf-8"))
+            m = Manifest.from_dict(data)
+        except Exception:
+            continue
+        enabled = [e for e in m.files if e.enabled and e.role != "excluded"]
+        file_count = 0
+        word_count = 0
+        last_modified = 0.0
+        for e in enabled:
+            fp = base / e.path
+            if fp.exists():
+                file_count += 1
+                try:
+                    word_count += len(fp.read_text(encoding="utf-8", errors="replace").split())
+                    mtime = fp.stat().st_mtime
+                    if mtime > last_modified:
+                        last_modified = mtime
+                except Exception:
+                    pass
+        summaries.append(WorkSummary(
+            title=m.title,
+            path=jf,
+            file_count=file_count,
+            word_count=word_count,
+            last_modified=last_modified,
+        ))
+    return summaries
 
 
 def _normalize_appendices(manifest: "Manifest") -> None:
@@ -260,59 +357,177 @@ class RolePickerScreen(ModalScreen):
         self.dismiss(role)
 
 
-class AddFileScreen(ModalScreen):
-    """Select untracked files to add to the manifest."""
+class FileExplorerScreen(ModalScreen):
+    """Browse the project directory tree and select files to add to the manifest."""
 
-    BINDINGS = [Binding("escape", "dismiss(None)", "Cancel")]
+    BINDINGS = [
+        Binding("escape",    "dismiss(None)",    "Cancel"),
+        Binding("space",     "toggle_selection", "Select"),
+        Binding("enter",     "activate_item",    "Open/Select"),
+        Binding("backspace", "go_up",            "Parent Dir", show=False),
+    ]
 
     DEFAULT_CSS = """
-    AddFileScreen { align: center middle; }
-    #add-box {
-        width: 54; height: auto; max-height: 30;
-        padding: 1 2; border: solid $primary; background: $surface;
+    FileExplorerScreen { align: center middle; }
+    #explorer-box {
+        width: 70; height: 28;
+        border: round $primary; background: $surface;
     }
-    #add-title { margin-bottom: 1; text-style: bold; }
-    #add-scroll { height: auto; max-height: 16; }
-    .file-ck { width: 100%; }
-    #add-btns { margin-top: 1; }
+    #explorer-path {
+        height: 1; background: $primary-darken-2;
+        color: $text; padding: 0 2; text-style: bold;
+    }
+    #explorer-list { height: 1fr; }
+    #explorer-status {
+        height: 1; background: $surface-lighten-1;
+        color: $text-muted; padding: 0 2;
+    }
+    #explorer-btns { height: 3; align: right middle; padding: 0 1; }
     """
 
-    def __init__(self, untracked: list[str]) -> None:
+    def __init__(self, base: Path, existing: set[str]) -> None:
         super().__init__()
-        self.untracked = untracked
-
-    @staticmethod
-    def _safe(name: str) -> str:
-        import re
-        return re.sub(r"[^a-zA-Z0-9_-]", "_", name)
+        self._base = base
+        self._cwd = base
+        self._existing = existing          # relative paths already in manifest
+        self._selected: set[Path] = set() # absolute paths chosen
+        self._entries: list[tuple[str, Path | None]] = []
 
     def compose(self) -> ComposeResult:
-        with Container(id="add-box"):
-            yield Label(f"Add Untracked Files  ({len(self.untracked)} found)", id="add-title")
-            with VerticalScroll(id="add-scroll"):
-                for f in self.untracked:
-                    yield Checkbox(f, id=f"ck-{self._safe(f)}", classes="file-ck")
-            with Horizontal(id="add-btns"):
-                yield Button("Add Selected", id="add-sel", variant="primary")
-                yield Button("Add All", id="add-all")
-                yield Button("Cancel", id="add-cancel")
+        with Container(id="explorer-box"):
+            yield Static("", id="explorer-path")
+            yield ListView(id="explorer-list")
+            yield Static("", id="explorer-status")
+            with Horizontal(id="explorer-btns"):
+                yield Button("Add Selected", id="exp-add", variant="primary")
+                yield Button("Cancel",       id="exp-cancel")
 
-    @on(Button.Pressed, "#add-sel")
-    def confirm_selected(self) -> None:
-        result = [
-            f for f in self.untracked
-            if self.query_one(f"#ck-{self._safe(f)}", Checkbox).value
-        ]
-        self.dismiss(result or None)
+    def on_mount(self) -> None:
+        self._refresh_list()
 
-    @on(Button.Pressed, "#add-all")
-    def confirm_all(self) -> None:
-        self.dismiss(self.untracked)
+    def _rel(self, path: Path) -> str:
+        return str(path.relative_to(self._base))
 
-    @on(Button.Pressed, "#add-cancel")
-    def cancel(self) -> None:
+    def _make_label(self, kind: str, path: "Path | None") -> str:
+        if kind == "up":
+            return "  [dim]\u2191  ..[/dim]"
+        assert path is not None
+        if kind == "dir":
+            return f"  [bold cyan]{chr(0x1f4c1)}  {path.name}/[/bold cyan]"
+        rel = self._rel(path)
+        in_manifest = rel in self._existing
+        selected = path in self._selected
+        if in_manifest:
+            return f"  [dim]\u00b7  {path.name}  [in manifest][/dim]"
+        marker = "[green]\u2713[/green]" if selected else " "
+        name = f"[green]{path.name}[/green]" if selected else path.name
+        return f"  {marker}  {name}"
+
+    def _refresh_list(self) -> None:
+        try:
+            rel = self._cwd.relative_to(self._base)
+            path_str = (
+                f"{self._base.name}/{rel}/"
+                if str(rel) != "."
+                else f"{self._base.name}/"
+            )
+        except ValueError:
+            path_str = str(self._cwd)
+
+        self.query_one("#explorer-path", Static).update(f"  {chr(0x1f4c2)}  {path_str}")
+
+        entries: list[tuple[str, Path | None]] = []
+        if self._cwd != self._base:
+            entries.append(("up", None))
+
+        try:
+            items = sorted(
+                self._cwd.iterdir(),
+                key=lambda x: (not x.is_dir(), x.name.lower()),
+            )
+            for item in items:
+                if item.name.startswith("."):
+                    continue
+                if item.is_dir():
+                    entries.append(("dir", item))
+                elif item.suffix.lower() in SUPPORTED_EXTENSIONS:
+                    entries.append(("file", item))
+        except PermissionError:
+            pass
+
+        self._entries = entries
+        lv = self.query_one("#explorer-list", ListView)
+        lv.clear()
+        for kind, path in entries:
+            lv.append(ListItem(Static(self._make_label(kind, path), markup=True)))
+
+        self.call_after_refresh(self._update_status)
+
+    def _update_status(self) -> None:
+        n = len(self._selected)
+        self.query_one("#explorer-status", Static).update(
+            f"  {n} file{'s' if n != 1 else ''} selected"
+            "  \u00b7  Space/Enter = select  \u00b7  Backspace = up"
+        )
+
+    def _toggle_current(self) -> None:
+        lv = self.query_one("#explorer-list", ListView)
+        idx = lv.index
+        if idx is None or idx >= len(self._entries):
+            return
+        kind, path = self._entries[idx]
+        if kind != "file" or path is None:
+            return
+        if self._rel(path) in self._existing:
+            return
+        if path in self._selected:
+            self._selected.discard(path)
+        else:
+            self._selected.add(path)
+        items = list(lv.query(ListItem))
+        if 0 <= idx < len(items):
+            items[idx].query_one(Static).update(self._make_label(kind, path))
+        self._update_status()
+
+    def action_toggle_selection(self) -> None:
+        self._toggle_current()
+
+    def action_activate_item(self) -> None:
+        lv = self.query_one("#explorer-list", ListView)
+        idx = lv.index
+        if idx is None or idx >= len(self._entries):
+            return
+        kind, path = self._entries[idx]
+        if kind == "up":
+            self.action_go_up()
+        elif kind == "dir" and path is not None:
+            self._cwd = path
+            self._refresh_list()
+        else:
+            self._toggle_current()
+
+    def action_go_up(self) -> None:
+        if self._cwd != self._base:
+            self._cwd = self._cwd.parent
+            self._refresh_list()
+
+    @on(ListView.Selected)
+    def _on_list_selected(self, event: "ListView.Selected") -> None:
+        idx = event.list_view.index
+        if idx is None or idx >= len(self._entries):
+            return
+        kind, path = self._entries[idx]
+        if kind in ("up", "dir"):
+            self.action_activate_item()
+
+    @on(Button.Pressed, "#exp-add")
+    def _add(self) -> None:
+        result = sorted(self._rel(p) for p in self._selected)
+        self.dismiss(result if result else None)
+
+    @on(Button.Pressed, "#exp-cancel")
+    def _cancel(self) -> None:
         self.dismiss(None)
-
 
 class ExportScreen(ModalScreen):
     """Export the book in selected formats via pandoc."""
@@ -326,6 +541,7 @@ class ExportScreen(ModalScreen):
         padding: 1 2; border: solid $primary; background: $surface;
     }
     #exp-title { text-style: bold; margin-bottom: 1; }
+    .exp-outdir { color: $text-muted; margin-bottom: 1; }
     .fmt-ck { width: 100%; }
     #exp-log {
         height: 8; border: solid $surface-lighten-2;
@@ -342,10 +558,12 @@ class ExportScreen(ModalScreen):
         self._log_lines: list[str] = []
 
     def compose(self) -> ComposeResult:
+        out_rel = self.manifest.output_dir or f"out/{_title_to_slug(self.manifest.title)}"
         with Container(id="exp-box"):
             yield Label("Export Book", id="exp-title")
+            yield Static(f"  Output: [dim]{out_rel}[/dim]", markup=True, classes="exp-outdir")
             yield Checkbox("PDF",                id="fmt-pdf",  value=True, classes="fmt-ck")
-            yield Checkbox("HTML (standalone)", id="fmt-html", value=True, classes="fmt-ck")
+            yield Checkbox("HTML (via Jinja2)", id="fmt-html", value=True, classes="fmt-ck")
             yield Checkbox("DOCX (Word)",       id="fmt-docx", value=True, classes="fmt-ck")
             yield Checkbox("Markdown",          id="fmt-md",   value=True, classes="fmt-ck")
             yield Static("", id="exp-log")
@@ -367,8 +585,9 @@ class ExportScreen(ModalScreen):
             "md":   self.query_one("#fmt-md",   Checkbox).value,
         }
 
-        out = self.base / OUTPUT_DIR
-        out.mkdir(exist_ok=True)
+        out_rel = self.manifest.output_dir or f"out/{_title_to_slug(self.manifest.title)}"
+        out = self.base / out_rel
+        out.mkdir(parents=True, exist_ok=True)
 
         enabled = [e for e in self.manifest.files if e.enabled and e.role != "excluded"]
         for e in enabled:
@@ -380,19 +599,27 @@ class ExportScreen(ModalScreen):
             self._log("error  No exportable files found.")
             return
 
-        combined = "\n\n---\n\n".join(
-            (self.base / e.path).read_text(encoding="utf-8") for e in exportable
-        )
+        output_name = self.manifest.output_name or _title_to_slug(self.manifest.title)
+
+        # Render md via Jinja2 template
+        rendered_md = render_book(self.base, self.manifest, "md")
         combined_path = out / "combined.md"
-        combined_path.write_text(combined, encoding="utf-8")
-        self._log(f"ok  Combined {len(exportable)} files -> combined.md")
+        combined_path.write_text(rendered_md, encoding="utf-8")
+        chapter_count = len(_build_chapter_list(self.base, self.manifest))
+        self._log(f"ok  Rendered {chapter_count} chapters -> combined.md")
 
         if fmts["md"]:
-            dest = out / "book.md"
+            dest = out / f"{output_name}.md"
             shutil.copy(combined_path, dest)
             self._log(f"ok  Markdown -> {dest.name}")
 
-        if not any(fmts[f] for f in ("pdf", "html", "docx")):
+        if fmts["html"]:
+            rendered_html = render_book(self.base, self.manifest, "html")
+            dest = out / f"{output_name}.html"
+            dest.write_text(rendered_html, encoding="utf-8")
+            self._log(f"ok  HTML -> {dest.name}")
+
+        if not any(fmts[f] for f in ("pdf", "docx")):
             self._log("-- Done --")
             return
 
@@ -401,12 +628,11 @@ class ExportScreen(ModalScreen):
             self._log("   Install: https://pandoc.org/installing.html")
             return
 
-        for fmt in ("pdf", "html", "docx"):
+        for fmt in ("pdf", "docx"):
             if not fmts[fmt]:
                 continue
-            dest = out / f"book.{fmt}"
-            extra = ["--standalone"] if fmt == "html" else []
-            cmd = ["pandoc", str(combined_path), "-o", str(dest)] + extra
+            dest = out / f"{output_name}.{fmt}"
+            cmd = ["pandoc", str(combined_path), "-o", str(dest)]
             try:
                 r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
                 if r.returncode == 0:
@@ -635,17 +861,19 @@ class BookManApp(App):
         Binding("a",             "add_file",       "Add/Include"),
         Binding("d",             "toggle_exclude", "Exclude"),
         Binding("x",             "remove_file",    "Remove"),
-        Binding("t",             "rename_title",   "Title"),
+        Binding("f2",            "rename_file",    "Rename"),
+        Binding("m",             "metadata",       "Metadata"),
         Binding("question_mark", "help",           "Help"),
         Binding("q",             "quit_app",       "Quit"),
     ]
 
     dirty: reactive[bool] = reactive(False)
 
-    def __init__(self, base: Path) -> None:
+    def __init__(self, base: Path, manifest_path: Path) -> None:
         super().__init__()
         self.base = base
-        self.manifest, self._startup_error = load_manifest(base)
+        self.manifest_path = manifest_path
+        self.manifest, self._startup_error = load_manifest(manifest_path, base)
         self._sel: int = 0
         self._drag_src: int | None = None
         self._drag_dst: int | None = None
@@ -732,9 +960,12 @@ class BookManApp(App):
         fpath = self.base / entry.path
         if fpath.exists():
             content = fpath.read_text(encoding="utf-8")
+            processed = _process_poetry_breaks(content, "  ")
+            is_poetry = processed != content
             _, color, role_label = ROLES.get(entry.role, ("CH", "white", "Chapter"))
-            header = f"**[{role_label}]**  `{entry.path}`\n\n---\n\n"
-            self.query_one("#preview-md", Markdown).update(header + content)
+            poetry_tag = "  \u2139\ufe0f *poetry mode*" if is_poetry else ""
+            header = f"**[{role_label}]**  `{entry.path}`{poetry_tag}\n\n---\n\n"
+            self.query_one("#preview-md", Markdown).update(header + processed)
         else:
             self.query_one("#preview-md", Markdown).update(
                 f"*File not found on disk:* `{entry.path}`"
@@ -885,13 +1116,13 @@ class BookManApp(App):
         self.push_screen(GotoScreen(n_chapters, current_ch_num), apply)
 
     def action_save(self) -> None:
-        err = save_manifest(self.base, self.manifest)
+        err = save_manifest(self.manifest_path, self.manifest)
         if err:
             self.notify(err, severity="error")
         else:
             self.dirty = False
             self._update_title()
-            self.notify("Saved .bookmanifest", severity="information")
+            self.notify(f"Saved {self.manifest_path.name}", severity="information")
 
     def action_export(self) -> None:
         self.push_screen(ExportScreen(self.base, self.manifest))
@@ -920,25 +1151,16 @@ class BookManApp(App):
             self._mark_dirty_refresh(self._sel)
             return
 
-        # Otherwise scan disk for files not yet in the manifest
-        tracked = {e.path for e in self.manifest.files}
-        untracked = sorted(
-            f.name for f in self.base.iterdir()
-            if f.suffix.lower() in SUPPORTED_EXTENSIONS
-            and not f.name.startswith(".")
-            and f.name not in tracked
-        )
-        if not untracked:
-            self.notify("No files on disk outside the manifest.", severity="information")
-            return
+        # Open file explorer — user browses project tree and picks files
+        existing = {e.path for e in self.manifest.files}
 
         def apply(paths: list[str] | None) -> None:
             if paths:
-                for p in paths:
-                    self.manifest.files.append(FileEntry(path=p, role=_guess_role(p)))
+                for rel in paths:
+                    self.manifest.files.append(FileEntry(path=rel, role=_guess_role(rel)))
                 self._mark_dirty_refresh(self._sel)
 
-        self.push_screen(AddFileScreen(untracked), apply)
+        self.push_screen(FileExplorerScreen(self.base, existing), apply)
 
     def action_toggle_exclude(self) -> None:
         if not self.manifest.files:
@@ -959,50 +1181,163 @@ class BookManApp(App):
         self._mark_dirty_refresh(self._sel)
         self.notify(f"Removed '{entry.path}' from manifest.", severity="information")
 
-    def action_rename_title(self) -> None:
+    def action_rename_file(self) -> None:
+        """Rename the selected file on disk and update the manifest."""
+        if not self.manifest.files:
+            return
+        entry = self.manifest.files[self._sel]
+        old_path = self.base / entry.path
+        is_missing = not old_path.exists()
+
         from textual.widgets import Button
 
-        class TitleScreen(ModalScreen):
+        class RenameScreen(ModalScreen):
             BINDINGS = [Binding("escape", "dismiss(None)", "Cancel")]
             DEFAULT_CSS = """
-            TitleScreen { align: center middle; }
-            TitleScreen > Vertical { width: 60; height: auto; border: round $primary; background: $surface; padding: 1 2; }
-            TitleScreen Label { margin-bottom: 1; text-style: bold; }
-            TitleScreen Input { width: 100%; }
-            TitleScreen .buttons { height: 3; align: right middle; }
+            RenameScreen { align: center middle; }
+            RenameScreen > Vertical {
+                width: 64; height: auto;
+                border: round $primary; background: $surface; padding: 1 2;
+            }
+            RenameScreen .field-label { text-style: bold; margin-bottom: 0; }
+            RenameScreen .field-hint  { color: $text-muted; margin-bottom: 1; }
+            RenameScreen Input { width: 100%; margin-bottom: 1; }
+            RenameScreen .buttons { height: 3; align: right middle; }
             """
-            def __init__(self, current: str) -> None:
+            def __init__(self, current: str, missing: bool) -> None:
                 super().__init__()
                 self._current = current
+                self._missing = missing
             def compose(self):
                 from textual.containers import Vertical, Horizontal
+                hint = (
+                    "[dim]File is missing on disk — only the manifest entry will be updated.[/dim]"
+                    if self._missing else
+                    "[dim]The file will be renamed on disk and in the manifest.[/dim]"
+                )
                 with Vertical():
-                    yield Label("Book Title")
-                    yield Input(self._current, id="title-input")
+                    yield Label("Rename File", classes="field-label")
+                    yield Label(hint, classes="field-hint", markup=True)
+                    yield Input(self._current, id="rename-input", select_on_focus=True)
                     with Horizontal(classes="buttons"):
-                        yield Button("OK", id="ok", variant="primary")
+                        yield Button("Rename", id="ok", variant="primary")
                         yield Button("Cancel", id="cancel")
             @on(Button.Pressed, "#ok")
             def _ok(self) -> None:
-                val = self.query_one("#title-input", Input).value.strip()
+                val = self.query_one("#rename-input", Input).value.strip()
                 self.dismiss(val or None)
             @on(Button.Pressed, "#cancel")
             def _cancel(self) -> None:
                 self.dismiss(None)
-            @on(Input.Submitted, "#title-input")
+            @on(Input.Submitted, "#rename-input")
             def _submit(self) -> None:
-                val = self.query_one("#title-input", Input).value.strip()
+                val = self.query_one("#rename-input", Input).value.strip()
                 self.dismiss(val or None)
 
-        def _apply(new_title):
+        def _apply(new_name: str | None) -> None:
+            if not new_name or new_name == entry.path:
+                return
+            new_path = self.base / new_name
+            # Reject if the new name already exists (and isn't the same file)
+            if new_path.exists() and new_path != old_path:
+                self.notify(f"File already exists: {new_name}", severity="error")
+                return
+            # Rename on disk if the file exists
+            if old_path.exists():
+                try:
+                    old_path.rename(new_path)
+                except OSError as exc:
+                    self.notify(f"Rename failed: {exc}", severity="error")
+                    return
+            # Update manifest entry
+            entry.path = new_name
+            self.dirty = True
+            self._rebuild_list()
+            self.notify(f"Renamed → {new_name}")
+
+        self.push_screen(RenameScreen(entry.path, is_missing), _apply)
+
+    def action_metadata(self) -> None:
+        """Open the metadata editor (title, output directory)."""
+        from textual.widgets import Button
+
+        class MetadataScreen(ModalScreen):
+            BINDINGS = [Binding("escape", "dismiss(None)", "Cancel")]
+            DEFAULT_CSS = """
+            MetadataScreen { align: center middle; }
+            MetadataScreen > Vertical {
+                width: 68; height: auto;
+                border: round $primary; background: $surface; padding: 1 2;
+            }
+            MetadataScreen .field-label { text-style: bold; margin-top: 1; }
+            MetadataScreen .field-hint { color: $text-muted; margin-bottom: 0; }
+            MetadataScreen Input { width: 100%; margin-bottom: 1; }
+            MetadataScreen .buttons { height: 3; align: right middle; margin-top: 1; }
+            """
+            def __init__(self, title: str, output_dir: str, output_name: str = "") -> None:
+                super().__init__()
+                self._title = title
+                self._output_dir = output_dir
+                self._output_name = output_name
+            def compose(self):
+                from textual.containers import Vertical, Horizontal
+                with Vertical():
+                    yield Label("Book Metadata", classes="field-label")
+                    yield Label("Title", classes="field-label")
+                    yield Input(self._title, id="meta-title")
+                    yield Label("Output Name  [dim](base filename, no extension)[/dim]",
+                                classes="field-label", markup=True)
+                    yield Label("[dim]e.g.  my-book  → my-book.pdf[/dim]", classes="field-hint", markup=True)
+                    yield Input(self._output_name, id="meta-outname")
+                    yield Label("Output Directory  [dim](relative to project root)[/dim]",
+                                classes="field-label", markup=True)
+                    yield Label("[dim]e.g.  out/my-book[/dim]", classes="field-hint", markup=True)
+                    yield Input(self._output_dir, id="meta-outdir")
+                    with Horizontal(classes="buttons"):
+                        yield Button("Save", id="ok", variant="primary")
+                        yield Button("Cancel", id="cancel")
+            @on(Button.Pressed, "#ok")
+            def _ok(self) -> None:
+                title = self.query_one("#meta-title", Input).value.strip()
+                outdir = self.query_one("#meta-outdir", Input).value.strip()
+                outname = self.query_one("#meta-outname", Input).value.strip()
+                self.dismiss((title or None, outdir, outname))
+            @on(Button.Pressed, "#cancel")
+            def _cancel(self) -> None:
+                self.dismiss(None)
+
+        cur_outdir = self.manifest.output_dir or f"out/{_title_to_slug(self.manifest.title)}"
+        cur_outname = self.manifest.output_name or _title_to_slug(self.manifest.title)
+
+        def _apply(result) -> None:
+            if result is None:
+                return
+            new_title, new_outdir, new_outname = result
+            changed = False
             if new_title and new_title != self.manifest.title:
                 self.manifest.title = new_title
+                # Rename the manifest file to match new title slug
+                new_path = manifest_path_for(self.base, new_title)
+                if new_path != self.manifest_path:
+                    try:
+                        new_path.parent.mkdir(parents=True, exist_ok=True)
+                        self.manifest_path.rename(new_path)
+                        self.manifest_path = new_path
+                    except Exception:
+                        pass
+                changed = True
+            if new_outdir != self.manifest.output_dir:
+                self.manifest.output_dir = new_outdir
+                changed = True
+            if new_outname and new_outname != self.manifest.output_name:
+                self.manifest.output_name = new_outname
+                changed = True
+            if changed:
                 self.dirty = True
                 self._update_title()
-                self.notify(f"Title set to \"{new_title}\"")
+                self.notify("Metadata saved")
 
-        self.push_screen(TitleScreen(self.manifest.title), _apply)
-
+        self.push_screen(MetadataScreen(self.manifest.title, cur_outdir, cur_outname), _apply)
     def action_help(self) -> None:
         self.push_screen(HelpScreen())
 
@@ -1013,7 +1348,7 @@ class BookManApp(App):
 
         def handle(choice: str) -> None:
             if choice == "save-quit":
-                save_manifest(self.base, self.manifest)
+                save_manifest(self.manifest_path, self.manifest)
                 self.exit()
             elif choice == "just-quit":
                 self.exit()
@@ -1026,10 +1361,204 @@ class BookManApp(App):
 
 # ---- Headless Export (used by make out) --------------------------------------
 
+# ---- Jinja2 Render Engine ---------------------------------------------------
+
+_BUILTIN_MD_TEMPLATE = """\
+{%- macro render_chapter(ch) %}{% if ch.num is not none %}
+---
+*Chapter {{ ch.num }}*
+
+{% endif %}{{ ch.content_md }}{% endmacro -%}
+{%- macro render_default(ch) %}{{ ch.content_md }}{% endmacro -%}
+{%- macro render(ch) -%}
+{%- if ch.role == "chapter" %}{{ render_chapter(ch) }}{%- else %}{{ render_default(ch) }}{%- endif %}
+{%- endmacro -%}
+---
+title: "{{ title }}"
+date: {{ date }}
+---
+{% for ch in chapters %}{{ render(ch) }}
+{% if not loop.last %}
+---
+
+{% endif %}
+{%- endfor %}
+"""
+
+_BUILTIN_HTML_TEMPLATE = """\
+{%- macro render_chapter(ch) -%}
+<section class="chapter">
+{% if ch.num is not none %}<p class="chapter-label">Chapter {{ ch.num }}</p>{% endif %}
+{{ ch.content_html | markdown | safe }}
+</section>
+{%- endmacro -%}
+{%- macro render_default(ch) -%}
+<section data-role="{{ ch.role }}">{{ ch.content_html | markdown | safe }}</section>
+{%- endmacro -%}
+{%- macro render(ch) -%}
+{%- if ch.role == "chapter" %}{{ render_chapter(ch) }}{%- else %}{{ render_default(ch) }}{%- endif %}
+{%- endmacro -%}
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>{{ title }}</title>
+<style>body{font-family:Georgia,serif;max-width:700px;margin:2em auto;padding:0 1.5em;line-height:1.7}
+.chapter-label{font-size:.8em;text-transform:uppercase;letter-spacing:.1em;color:#999}
+.cover{text-align:center;margin:3em 0}.cover h1{font-size:3em}
+hr{border:none;border-top:1px solid #ddd;margin:2.5em 0}</style>
+</head><body>
+<div class="cover"><h1>{{ title }}</h1><p>{{ date }}</p></div>
+{% for ch in chapters %}{{ render(ch) }}{% if not loop.last %}<hr>{% endif %}{% endfor %}
+</body></html>
+"""
+
+
+# ---- Poetry Detection -------------------------------------------------------
+
+_POETRY_SKIP_RE = None
+
+def _poetry_skip_re():
+    global _POETRY_SKIP_RE
+    if _POETRY_SKIP_RE is None:
+        import re
+        _POETRY_SKIP_RE = re.compile(r"^(#{1,6}\s|[-*+]\s|\d+\.\s|>\s|```|\s{4})")
+    return _POETRY_SKIP_RE
+
+
+def _detect_block_poetry(lines: list) -> bool:
+    """Return True if a list of content lines looks like a poetry block."""
+    skip = _poetry_skip_re()
+    filtered = [l for l in lines if l.strip() and not skip.match(l)]
+    if len(filtered) < 3:
+        return False
+    return max(len(l.rstrip()) for l in filtered) < 100
+
+
+def _process_poetry_breaks(content: str, line_break: str = "  ") -> str:
+    """Add line breaks to poetry-like blocks within markdown content."""
+    import re
+    skip = _poetry_skip_re()
+    blocks = re.split(r"\n\n+", content)
+    result = []
+    for block in blocks:
+        lines = block.splitlines()
+        filtered = [l for l in lines if l.strip() and not skip.match(l)]
+        if _detect_block_poetry(filtered):
+            processed = []
+            for line in lines:
+                if line.strip():
+                    processed.append(line.rstrip() + line_break)
+                else:
+                    processed.append(line)
+            result.append("\n".join(processed))
+        else:
+            result.append(block)
+    return "\n\n".join(result)
+
+
+def _resolve_template(base: Path, manifest: "Manifest", fmt: str) -> str:
+    """Return Jinja2 template source for *fmt* using resolution priority."""
+    # 1. custom_templates field
+    if fmt in manifest.custom_templates:
+        tpath = base / manifest.custom_templates[fmt]
+        if tpath.exists():
+            return tpath.read_text(encoding="utf-8")
+    # 2. files with role="template" whose note matches this fmt
+    for e in manifest.files:
+        if e.role == "template" and e.exists_at(base):
+            fmts_listed = [f.strip() for f in (e.note or "").split(",") if f.strip()]
+            if not fmts_listed or fmt in fmts_listed:
+                return (base / e.path).read_text(encoding="utf-8")
+    # 3. templates/book.<fmt>.j2 on disk
+    tpath = base / "templates" / f"book.{fmt}.j2"
+    if tpath.exists():
+        return tpath.read_text(encoding="utf-8")
+    # 4. built-in fallback
+    if fmt == "html":
+        return _BUILTIN_HTML_TEMPLATE
+    return _BUILTIN_MD_TEMPLATE
+
+
+def _render_markdown(text: str) -> str:
+    """Convert markdown text to HTML. Uses the markdown package if available."""
+    try:
+        import markdown as _md
+        return _md.markdown(text, extensions=["extra", "sane_lists"])
+    except ImportError:
+        # Minimal fallback: wrap paragraphs in <p>
+        import re
+        paras = re.split(r"\n\n+", text.strip())
+        return "\n".join(f"<p>{p.strip()}</p>" for p in paras if p.strip())
+
+
+def _build_chapter_list(base: Path, manifest: "Manifest") -> list[dict]:
+    """Return chapter dicts with rendered content for use in templates."""
+    enabled = [
+        e for e in manifest.files
+        if e.enabled and e.role not in ("excluded", "template") and e.exists_at(base)
+    ]
+    chapter_num = 0
+    chapters = []
+    for e in enabled:
+        if e.role == "chapter":
+            chapter_num += 1
+            num: int | None = chapter_num
+        else:
+            num = None
+        content = (base / e.path).read_text(encoding="utf-8").strip()
+        first_line = content.splitlines()[0].lstrip("# ").strip() if content else Path(e.path).stem
+        content_md = _process_poetry_breaks(content, "  ")
+        content_html_raw = _process_poetry_breaks(content, "  <br>")
+        is_poetry = content_md != content  # any block was processed
+        chapters.append({
+            "title": first_line,
+            "filename": e.path,
+            "role": e.role,
+            "num": num,
+            "content": content,
+            "content_md": content_md,
+            "content_html_raw": content_html_raw,
+            "content_html": _render_markdown(content_html_raw),
+            "is_poetry": is_poetry,
+        })
+    return chapters
+
+
+def render_book(base: Path, manifest: "Manifest", fmt: str) -> str:
+    """Render the book using Jinja2, returning the rendered string."""
+    from jinja2 import Environment, BaseLoader
+    from datetime import datetime
+
+    template_src = _resolve_template(base, manifest, fmt)
+    try:
+        import markdown as _md_pkg
+        def _markdown_filter(text: str) -> str:
+            return _md_pkg.markdown(text, extensions=["extra", "sane_lists"])
+    except ImportError:
+        def _markdown_filter(text: str) -> str:
+            # Fallback: wrap in <p> if markdown not installed
+            return "<p>" + text.replace("\n\n", "</p>\n<p>") + "</p>"
+
+    env = Environment(loader=BaseLoader(), keep_trailing_newline=True)
+    env.filters["markdown"] = _markdown_filter
+    chapters = _build_chapter_list(base, manifest)
+    body = "\n\n---\n\n".join(ch["content"] for ch in chapters)
+    output_name = manifest.output_name or _title_to_slug(manifest.title)
+    ctx = {
+        "title": manifest.title,
+        "output_name": output_name,
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "year": datetime.now().year,
+        "chapters": chapters,
+        "body": body,
+        "metadata": manifest.to_dict(),
+    }
+    return env.from_string(template_src).render(**ctx)
+
+
 def export_book_cli(base: Path, manifest: Manifest, fmts: set[str]) -> None:
     """Run export pipeline without the GUI; prints progress to stdout."""
-    out = base / OUTPUT_DIR
-    out.mkdir(exist_ok=True)
+    out_rel = manifest.output_dir or f"out/{_title_to_slug(manifest.title)}"
+    out = base / out_rel
+    out.mkdir(parents=True, exist_ok=True)
+    print(f"output  {out_rel}")
 
     enabled = [e for e in manifest.files if e.enabled and e.role != "excluded"]
     skipped = [e.path for e in enabled if not e.exists_at(base)]
@@ -1042,37 +1571,246 @@ def export_book_cli(base: Path, manifest: Manifest, fmts: set[str]) -> None:
         print("error  No exportable files found.", file=sys.stderr)
         sys.exit(1)
 
-    combined = "\n\n---\n\n".join(
-        (base / e.path).read_text(encoding="utf-8") for e in exportable
-    )
+    output_name = manifest.output_name or _title_to_slug(manifest.title)
+
+    # Render md via Jinja2 template
+    rendered_md = render_book(base, manifest, "md")
     combined_path = out / "combined.md"
-    combined_path.write_text(combined, encoding="utf-8")
-    print(f"ok  Combined {len(exportable)} files -> combined.md")
+    combined_path.write_text(rendered_md, encoding="utf-8")
+    exportable_count = len(_build_chapter_list(base, manifest))
+    print(f"ok  Rendered {exportable_count} chapters -> combined.md")
 
     if "md" in fmts:
-        dest = out / "book.md"
+        dest = out / f"{output_name}.md"
         shutil.copy(combined_path, dest)
         print(f"ok  Markdown -> {dest.name}")
 
-    if not fmts & {"pdf", "html", "docx"}:
+    if "html" in fmts:
+        rendered_html = render_book(base, manifest, "html")
+        dest = out / f"{output_name}.html"
+        dest.write_text(rendered_html, encoding="utf-8")
+        print(f"ok  HTML -> {dest.name}")
+
+    if not fmts & {"pdf", "docx"}:
         return
 
     if not shutil.which("pandoc"):
         print("error  pandoc not found. Install: https://pandoc.org/installing.html", file=sys.stderr)
         sys.exit(1)
 
-    for fmt in ("pdf", "html", "docx"):
+    for fmt in ("pdf", "docx"):
         if fmt not in fmts:
             continue
-        dest = out / f"book.{fmt}"
-        extra = ["--standalone"] if fmt == "html" else []
-        cmd = ["pandoc", str(combined_path), "-o", str(dest)] + extra
+        dest = out / f"{output_name}.{fmt}"
+        cmd = ["pandoc", str(combined_path), "-o", str(dest)]
         import subprocess
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         if r.returncode == 0:
             print(f"ok  {fmt.upper()} -> {dest.name}")
         else:
             print(f"error  {fmt.upper()}: {r.stderr.strip()[:200]}", file=sys.stderr)
+
+
+# ---- Works Launcher -----------------------------------------------------------
+
+class WorksLauncherApp(App):
+    """Launcher screen: lists all works in works/ with stats."""
+
+    TITLE = "Book Works Launcher"
+
+    CSS = """
+    WorksLauncherApp {
+        background: $surface;
+    }
+    #launcher-title {
+        height: 1;
+        background: $primary-darken-2;
+        color: $text;
+        text-align: center;
+        text-style: bold;
+        padding: 0 2;
+    }
+    #works-list {
+        height: 1fr;
+        padding: 1 2;
+    }
+    #works-list > ListItem {
+        height: 4;
+        padding: 0 1;
+        margin-bottom: 1;
+        border: solid $surface-lighten-2;
+    }
+    #works-list > ListItem:focus-within {
+        border: solid $primary;
+        background: $surface-lighten-1;
+    }
+    #works-list > ListItem.--highlight {
+        border: solid $primary;
+        background: $surface-lighten-1;
+    }
+    .work-title {
+        text-style: bold;
+        color: $text;
+    }
+    .work-stats {
+        color: $text-muted;
+        height: 1;
+    }
+    #no-works {
+        padding: 2 4;
+        color: $text-muted;
+    }
+    #launcher-footer {
+        height: 1;
+        background: $primary-darken-2;
+        color: $text-muted;
+        text-align: center;
+        padding: 0 2;
+    }
+    """
+
+    BINDINGS = [
+        Binding("enter", "open_work", "Open"),
+        Binding("n",     "new_work",  "New Work"),
+        Binding("q",     "quit",      "Quit"),
+        Binding("k",     "cursor_up",   "Up",   show=False),
+        Binding("j",     "cursor_down", "Down", show=False),
+    ]
+
+    def __init__(self, base: Path) -> None:
+        super().__init__()
+        self.base = base
+        self._works: list[WorkSummary] = []
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=True)
+        yield Static("", id="launcher-title")
+        yield ListView(id="works-list")
+        yield Static(
+            "  ↑↓/jk Navigate   Enter Open   N New Work   Q Quit  ",
+            id="launcher-footer",
+            markup=False,
+        )
+
+    def on_mount(self) -> None:
+        _migrate_dotfile(self.base)
+        self._works = scan_works(self.base)
+        self.query_one("#launcher-title", Static).update(
+            f"★  Book Works — {self.base.name}  ★"
+        )
+        self._rebuild_list()
+
+    def _rebuild_list(self) -> None:
+        from datetime import datetime
+        lv = self.query_one("#works-list", ListView)
+        lv.clear()
+        if not self._works:
+            lv.mount(ListItem(Static(
+                "No works found.  Press [bold]N[/bold] to create a new work.",
+                id="no-works",
+                markup=True,
+            )))
+            return
+        for w in self._works:
+            lm = (
+                datetime.fromtimestamp(w.last_modified).strftime("%Y-%m-%d %H:%M")
+                if w.last_modified else "unknown"
+            )
+            words_k = f"{w.word_count // 1000}k" if w.word_count >= 1000 else str(w.word_count)
+            stats = (
+                f"{w.file_count} file{'s' if w.file_count != 1 else ''}  ·  "
+                f"{words_k} words  ·  modified {lm}"
+            )
+            lv.append(ListItem(
+                Static(f"[bold]{w.title}[/bold]", classes="work-title", markup=True),
+                Static(stats, classes="work-stats"),
+            ))
+        # Focus list and set initial selection
+        def _init_focus():
+            lv.focus()
+            if self._works:
+                lv.index = 0
+        self.call_after_refresh(_init_focus)
+
+    def action_cursor_up(self) -> None:
+        lv = self.query_one("#works-list", ListView)
+        lv.action_cursor_up()
+
+    def action_cursor_down(self) -> None:
+        lv = self.query_one("#works-list", ListView)
+        lv.action_cursor_down()
+
+    @on(ListView.Selected)
+    def _on_selected(self, event: "ListView.Selected") -> None:
+        self.action_open_work()
+
+    def action_open_work(self) -> None:
+        if not self._works:
+            return
+        lv = self.query_one("#works-list", ListView)
+        idx = lv.index if lv.index is not None else 0
+        if 0 <= idx < len(self._works):
+            self.exit(result=("open", self._works[idx].path))
+
+    def action_new_work(self) -> None:
+        class NewWorkScreen(ModalScreen):
+            BINDINGS = [Binding("escape", "dismiss(None)", "Cancel")]
+            DEFAULT_CSS = """
+            NewWorkScreen { align: center middle; }
+            NewWorkScreen > Vertical {
+                width: 60; height: auto;
+                border: round $primary; background: $surface; padding: 1 2;
+            }
+            NewWorkScreen Label { margin-bottom: 1; text-style: bold; }
+            NewWorkScreen Input { width: 100%; }
+            NewWorkScreen .buttons { height: 3; align: right middle; }
+            """
+            def compose(self):
+                from textual.containers import Vertical, Horizontal
+                from textual.widgets import Button
+                with Vertical():
+                    yield Label("New Work — Enter title:")
+                    yield Input("", placeholder="e.g. My Novel", id="new-title-input")
+                    with Horizontal(classes="buttons"):
+                        yield Button("Create", id="ok", variant="primary")
+                        yield Button("Cancel", id="cancel")
+            @on(Button.Pressed, "#ok")
+            def _ok(self) -> None:
+                val = self.query_one("#new-title-input", Input).value.strip()
+                self.dismiss(val or None)
+            @on(Button.Pressed, "#cancel")
+            def _cancel(self) -> None:
+                self.dismiss(None)
+            @on(Input.Submitted, "#new-title-input")
+            def _submit(self) -> None:
+                val = self.query_one("#new-title-input", Input).value.strip()
+                self.dismiss(val or None)
+
+        def _create(title: str | None) -> None:
+            if not title:
+                return
+            mp = manifest_path_for(self.base, title)
+            mp.parent.mkdir(parents=True, exist_ok=True)
+            if not mp.exists():
+                fresh = Manifest(title=title, output_dir=f"out/{_title_to_slug(title)}")
+                save_manifest(mp, fresh)
+            self.exit(result=("open", mp))
+
+        self.push_screen(NewWorkScreen(), _create)
+
+
+def run_launcher(base: Path) -> None:
+    """Run the launcher; if a work is selected, open it in BookManApp."""
+    while True:
+        launcher = WorksLauncherApp(base)
+        result = launcher.run()
+        if not result:
+            break
+        action, manifest_path = result
+        if action == "open":
+            BookManApp(base, manifest_path).run()
+        else:
+            break
 
 
 # ---- Entry Point --------------------------------------------------------------
@@ -1084,8 +1822,12 @@ if __name__ == "__main__":
         description="Book Manifest Manager",
     )
     parser.add_argument(
-        "directory", nargs="?", default=".",
-        help="Book directory (default: current directory)",
+        "path", nargs="?", default=".",
+        help="Book directory (default: cwd) or path to a .json manifest file",
+    )
+    parser.add_argument(
+        "--manifest", metavar="FILE",
+        help="Open a specific manifest .json file directly (skips launcher)",
     )
     parser.add_argument(
         "--export", action="store_true",
@@ -1098,15 +1840,51 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    base_dir = Path(args.directory).resolve()
-    if not base_dir.is_dir():
-        print(f"error: not a directory: {base_dir}", file=sys.stderr)
+    given = Path(args.path).resolve()
+    if given.is_file() and given.suffix == ".json":
+        # Direct manifest path given
+        manifest_file = given
+        base_dir = given.parent.parent  # works/<slug>.json -> base
+        _migrate_dotfile(base_dir)
+        if args.export:
+            pass  # handled below
+        else:
+            BookManApp(base_dir, manifest_file).run()
+            sys.exit(0)
+    elif given.is_dir():
+        base_dir = given
+    else:
+        print(f"error: not a directory or manifest file: {given}", file=sys.stderr)
         sys.exit(1)
 
+    _migrate_dotfile(base_dir)
+
+    # --manifest flag overrides launcher
+    if getattr(args, "manifest", None):
+        mf = Path(args.manifest).resolve()
+        if not mf.exists():
+            print(f"error: manifest not found: {mf}", file=sys.stderr)
+            sys.exit(1)
+        if not args.export:
+            BookManApp(base_dir, mf).run()
+            sys.exit(0)
+        # export with explicit manifest
+        manifest, err = load_manifest(mf, base_dir)
+        if err:
+            print(f"warning  {err}", file=sys.stderr)
+        export_book_cli(base_dir, manifest, set(args.formats.split(",")))
+        sys.exit(0)
+
     if args.export:
-        manifest, err = load_manifest(base_dir)
+        _migrate_dotfile(base_dir)
+        works = scan_works(base_dir)
+        if not works:
+            print("error  no manifests found in works/", file=sys.stderr)
+            sys.exit(1)
+        chosen = works[0]  # default: first manifest
+        manifest, err = load_manifest(chosen.path, base_dir)
         if err:
             print(f"warning  {err}", file=sys.stderr)
         export_book_cli(base_dir, manifest, set(args.formats.split(",")))
     else:
-        BookManApp(base_dir).run()
+        run_launcher(base_dir)
