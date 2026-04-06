@@ -46,6 +46,7 @@ ROLES: dict[str, tuple[str, str, str]] = {
     "appendix":     ("AP", "#78909c", "Appendix"),
     "excluded":     ("--", "#666666", "Excluded"),
     "template":     ("TM", "#80cbc4", "Template"),
+    "poetry":       ("PO", "#f48fb1", "Poetry"),
 }
 
 WORKS_DIR = "works"
@@ -960,8 +961,9 @@ class BookManApp(App):
         fpath = self.base / entry.path
         if fpath.exists():
             content = fpath.read_text(encoding="utf-8")
-            processed = _process_poetry_breaks(content, "  ")
-            is_poetry = processed != content
+            force_poetry = entry.role == "poetry"
+            processed = _process_poetry_breaks(content, "  ", force=force_poetry)
+            is_poetry = force_poetry or processed != content
             _, color, role_label = ROLES.get(entry.role, ("CH", "white", "Chapter"))
             poetry_tag = "  \u2139\ufe0f *poetry mode*" if is_poetry else ""
             header = f"**[{role_label}]**  `{entry.path}`{poetry_tag}\n\n---\n\n"
@@ -1423,16 +1425,28 @@ def _poetry_skip_re():
 
 
 def _detect_block_poetry(lines: list) -> bool:
-    """Return True if a list of content lines looks like a poetry block."""
+    """Return True if a list of content lines looks like a poetry block.
+
+    Only interior lines (not the last line of the paragraph) are used for
+    the short-line heuristic: paragraph-closing lines are often short even in
+    prose and should not bias detection.
+    """
     skip = _poetry_skip_re()
     filtered = [l for l in lines if l.strip() and not skip.match(l)]
     if len(filtered) < 3:
         return False
-    return max(len(l.rstrip()) for l in filtered) < 100
+    body = filtered[:-1]  # exclude the paragraph-final line
+    return max(len(l.rstrip()) for l in body) < 100
 
 
-def _process_poetry_breaks(content: str, line_break: str = "  ") -> str:
-    """Add line breaks to poetry-like blocks within markdown content."""
+def _process_poetry_breaks(content: str, line_break: str = "  ", force: bool = False) -> str:
+    """Add line breaks to poetry-like blocks within markdown content.
+
+    When *force* is True every block is treated as poetry regardless of the
+    automatic heuristic (used when the file role is explicitly \"poetry\").
+    The last non-empty line of each block never gets a trailing hard break
+    because the following paragraph separator already provides the break.
+    """
     import re
     skip = _poetry_skip_re()
     blocks = re.split(r"\n\n+", content)
@@ -1440,10 +1454,11 @@ def _process_poetry_breaks(content: str, line_break: str = "  ") -> str:
     for block in blocks:
         lines = block.splitlines()
         filtered = [l for l in lines if l.strip() and not skip.match(l)]
-        if _detect_block_poetry(filtered):
+        if force or _detect_block_poetry(filtered):
             processed = []
-            for line in lines:
-                if line.strip():
+            last_idx = max((i for i, l in enumerate(lines) if l.strip()), default=-1)
+            for i, line in enumerate(lines):
+                if line.strip() and i != last_idx:
                     processed.append(line.rstrip() + line_break)
                 else:
                     processed.append(line)
@@ -1504,9 +1519,10 @@ def _build_chapter_list(base: Path, manifest: "Manifest") -> list[dict]:
             num = None
         content = (base / e.path).read_text(encoding="utf-8").strip()
         first_line = content.splitlines()[0].lstrip("# ").strip() if content else Path(e.path).stem
-        content_md = _process_poetry_breaks(content, "  ")
-        content_html_raw = _process_poetry_breaks(content, "  <br>")
-        is_poetry = content_md != content  # any block was processed
+        force_poetry = e.role == "poetry"
+        content_md = _process_poetry_breaks(content, "  ", force=force_poetry)
+        content_html_raw = _process_poetry_breaks(content, "  <br>", force=force_poetry)
+        is_poetry = force_poetry or content_md != content  # any block was processed
         chapters.append({
             "title": first_line,
             "filename": e.path,
