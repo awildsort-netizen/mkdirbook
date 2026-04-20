@@ -44,5 +44,15 @@ order.
 
 ### How to use
 
-Simply type `make` in the console. A textual UI will pop up and let you import, organize, and
-export small units of meaning into larger units like PDFs and docx. 
+Run `make install` once from the project root to create the virtual environment.
+
+After that, each book builds from its own directory:
+
+```sh
+cd free2move
+make
+```
+
+That default build writes **HTML** and **DOCX** output using the book's local manifest.
+
+From the project root, `make gui` still opens the textual manifest manager.

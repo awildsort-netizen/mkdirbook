@@ -49,7 +49,6 @@ ROLES: dict[str, tuple[str, str, str]] = {
     "poetry":       ("PO", "#f48fb1", "Poetry"),
 }
 
-WORKS_DIR = "works"
 MANIFEST_FILE = ".bookmanifest"  # legacy; kept for migration only
 
 
@@ -60,23 +59,43 @@ def _title_to_slug(title: str) -> str:
 
 
 def manifest_path_for(base: Path, title: str) -> Path:
-    """Return the canonical works/<slug>.json path for a given title."""
-    return base / WORKS_DIR / f"{_title_to_slug(title)}.json"
+    """Return the canonical <work-dir>/<slug>.json path for a given title."""
+    slug = _title_to_slug(title)
+    return base / slug / f"{slug}.json"
+
+
+def _looks_like_manifest(path: Path) -> bool:
+    """Return True when a JSON file matches the expected manifest shape."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    return isinstance(data, dict) and isinstance(data.get("title"), str) and isinstance(data.get("files"), list)
+
+
+def find_manifest_paths(base: Path) -> list[Path]:
+    """Find manifest JSON files kept inside top-level work directories."""
+    manifests: list[Path] = []
+    for jf in sorted(base.glob("*/*.json")):
+        if jf.parent.name.startswith(".") or jf.parent.name in {"out", "scripts", "templates", ".venv"}:
+            continue
+        if _looks_like_manifest(jf):
+            manifests.append(jf)
+    return manifests
 
 
 def _migrate_dotfile(base: Path) -> None:
-    """If .bookmanifest exists and works/ has no JSON files, migrate it."""
+    """If .bookmanifest exists and no manifests exist yet, migrate it."""
     old = base / MANIFEST_FILE
-    works_dir = base / WORKS_DIR
     if not old.exists():
         return
-    works_dir.mkdir(parents=True, exist_ok=True)
-    if list(works_dir.glob("*.json")):
+    if find_manifest_paths(base):
         return  # already migrated
     try:
         data = json.loads(old.read_text(encoding="utf-8"))
         title = data.get("title", base.name.replace("-", " ").replace("_", " ").title())
-        dest = works_dir / f"{_title_to_slug(title)}.json"
+        dest = manifest_path_for(base, title)
+        dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         old.unlink()
     except Exception as exc:
@@ -220,12 +239,9 @@ class WorkSummary:
 
 
 def scan_works(base: Path) -> list[WorkSummary]:
-    """Scan works/ directory and return summaries for all manifests."""
-    works_dir = base / WORKS_DIR
-    if not works_dir.exists():
-        return []
+    """Scan top-level work directories and return summaries for all manifests."""
     summaries: list[WorkSummary] = []
-    for jf in sorted(works_dir.glob("*.json")):
+    for jf in find_manifest_paths(base):
         try:
             data = json.loads(jf.read_text(encoding="utf-8"))
             m = Manifest.from_dict(data)
@@ -1319,7 +1335,7 @@ class BookManApp(App):
             if new_title and new_title != self.manifest.title:
                 self.manifest.title = new_title
                 # Rename the manifest file to match new title slug
-                new_path = manifest_path_for(self.base, new_title)
+                new_path = self.manifest_path.with_name(f"{_title_to_slug(new_title)}.json")
                 if new_path != self.manifest_path:
                     try:
                         new_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1366,9 +1382,7 @@ class BookManApp(App):
 # ---- Jinja2 Render Engine ---------------------------------------------------
 
 _BUILTIN_MD_TEMPLATE = """\
-{%- macro render_chapter(ch) %}{% if ch.num is not none %}
----
-*Chapter {{ ch.num }}*
+{%- macro render_chapter(ch) %}{% if ch.num is not none %}*Chapter {{ ch.num }}*
 
 {% endif %}{{ ch.content_md }}{% endmacro -%}
 {%- macro render_default(ch) %}{{ ch.content_md }}{% endmacro -%}
@@ -1630,7 +1644,7 @@ def export_book_cli(base: Path, manifest: Manifest, fmts: set[str]) -> None:
 # ---- Works Launcher -----------------------------------------------------------
 
 class WorksLauncherApp(App):
-    """Launcher screen: lists all works in works/ with stats."""
+    """Launcher screen: lists all works found in the project tree."""
 
     TITLE = "Book Works Launcher"
 
@@ -1860,7 +1874,7 @@ if __name__ == "__main__":
     if given.is_file() and given.suffix == ".json":
         # Direct manifest path given
         manifest_file = given
-        base_dir = given.parent.parent  # works/<slug>.json -> base
+        base_dir = given.parent.parent
         _migrate_dotfile(base_dir)
         if args.export:
             pass  # handled below
@@ -1881,21 +1895,22 @@ if __name__ == "__main__":
         if not mf.exists():
             print(f"error: manifest not found: {mf}", file=sys.stderr)
             sys.exit(1)
+        manifest_base = mf.parent.parent
         if not args.export:
-            BookManApp(base_dir, mf).run()
+            BookManApp(manifest_base, mf).run()
             sys.exit(0)
         # export with explicit manifest
-        manifest, err = load_manifest(mf, base_dir)
+        manifest, err = load_manifest(mf, manifest_base)
         if err:
             print(f"warning  {err}", file=sys.stderr)
-        export_book_cli(base_dir, manifest, set(args.formats.split(",")))
+        export_book_cli(manifest_base, manifest, set(args.formats.split(",")))
         sys.exit(0)
 
     if args.export:
         _migrate_dotfile(base_dir)
         works = scan_works(base_dir)
         if not works:
-            print("error  no manifests found in works/", file=sys.stderr)
+            print("error  no manifests found in the project", file=sys.stderr)
             sys.exit(1)
         chosen = works[0]  # default: first manifest
         manifest, err = load_manifest(chosen.path, base_dir)

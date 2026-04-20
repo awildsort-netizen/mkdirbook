@@ -1,48 +1,30 @@
-# Free to Move -- book project
+# mkdirbook -- project-level helpers
 #
 # Targets:
 #   make install        Create .venv, install deps
-#   make / make gui     Launch the manifest manager TUI (works launcher)
-#   make out            Export all formats (pdf html md docx)
-#   make pdf/html/md/docx  Single-format export
-#   make check          Dry-run: show what would be compiled
-#   make clean          Remove out/ build artifacts
-#
-# Override the manifest:  make pdf MANIFEST=works/other.json
+#   make / make gui     Launch the manifest manager TUI
+#   make clean          Remove generated output
+#   make help           Show book build commands
 
-PYTHON   := .venv/bin/python
-BOOKCC   := scripts/bookcc.py
-BOOKMAN  := scripts/bookman.py
-MANIFEST := works/free2move.json
-BOOKDIR  := .
+PYTHON  := .venv/bin/python
+BOOKMAN := scripts/bookman.py
+BOOKDIR := .
 
 export PYTHONPYCACHEPREFIX := scripts/__pycache__
 
-.PHONY: gui out pdf html md docx install clean check
+.DEFAULT_GOAL := help
 
-# Default target: open the manifest manager TUI
+.PHONY: help gui install clean
+
 gui: .venv
 	$(PYTHON) $(BOOKMAN) $(BOOKDIR)
 
-# Export all formats
-out: .venv
-	$(PYTHON) $(BOOKCC) $(MANIFEST) -f pdf,html,md,docx
-
-pdf: .venv
-	$(PYTHON) $(BOOKCC) $(MANIFEST) -f pdf
-
-html: .venv
-	$(PYTHON) $(BOOKCC) $(MANIFEST) -f html
-
-md: .venv
-	$(PYTHON) $(BOOKCC) $(MANIFEST) -f md
-
-docx: .venv
-	$(PYTHON) $(BOOKCC) $(MANIFEST) -f docx
-
-# Dry run: show what would be compiled without writing anything
-check: .venv
-	$(PYTHON) $(BOOKCC) $(MANIFEST) -n -v
+help:
+	@echo "Project commands:"
+	@echo "  make install"
+	@echo "  make gui"
+	@echo "  cd free2move && make"
+	@echo "  cd newsletters && make"
 
 # Set up the virtual environment and install dependencies
 install:

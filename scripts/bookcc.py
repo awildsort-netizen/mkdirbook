@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from __future__ import annotations
 """bookcc — book compiler
 
 gcc-style CLI for rendering book manifests to PDF, HTML, DOCX, or Markdown.
@@ -6,7 +7,7 @@ gcc-style CLI for rendering book manifests to PDF, HTML, DOCX, or Markdown.
 Usage:
   bookcc [OPTIONS] [MANIFEST] [FILE ...]
 
-  MANIFEST   .json manifest file  (if omitted, scans works/ for a single manifest)
+  MANIFEST   .json manifest file  (if omitted, scans the project for a single manifest)
   FILE ...   .md source files     (creates an ad-hoc manifest if no MANIFEST given)
 
 Options:
@@ -23,11 +24,11 @@ Options:
   --version   Print version and exit
 
 Examples:
-  bookcc works/novel.json -o out/novel.pdf
-  bookcc works/novel.json -o out/novel.pdf,html,md
+  bookcc free2move/free2move.json -o out/free2move.pdf
+  bookcc free2move/free2move.json -o out/free2move.pdf,html,md
   bookcc ch1.md ch2.md ch3.md -o draft.pdf -t "My Draft"
-  bookcc works/novel.json -f pdf,html
-  bookcc works/novel.json                     # all formats to manifest output_dir
+  bookcc free2move/free2move.json -f pdf,html
+  bookcc free2move/free2move.json            # all formats to manifest output_dir
 """
 
 import argparse
@@ -63,10 +64,10 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  bookcc works/novel.json -o out/novel.pdf\n"
-            "  bookcc works/novel.json -o out/novel.pdf,html,md\n"
+            "  bookcc free2move/free2move.json -o out/free2move.pdf\n"
+            "  bookcc free2move/free2move.json -o out/free2move.pdf,html,md\n"
             "  bookcc ch1.md ch2.md -o draft.pdf -t \"My Draft\"\n"
-            "  bookcc works/novel.json -f pdf,html\n"
+            "  bookcc free2move/free2move.json -f pdf,html\n"
         ),
         add_help=True,
     )
@@ -216,7 +217,7 @@ def main(argv: list[str] | None = None) -> int:
         manifest_path = manifest_inputs[0].resolve()
         if not manifest_path.exists():
             _die(f"Manifest not found: {manifest_path}")
-        base = manifest_path.parent.parent  # works/ -> project root
+        base = manifest_path.parent.parent
         manifest, err = load_manifest(manifest_path, base)
         if err:
             _warn(f"Manifest loaded with warnings: {err}")
@@ -227,14 +228,11 @@ def main(argv: list[str] | None = None) -> int:
         title = args.title or "Untitled"
         manifest, base = _manifest_from_files([p.resolve() for p in md_inputs], title)
     else:
-        # No inputs: scan works/ for a single manifest
+        # No inputs: scan the project for a single manifest
         cwd = Path.cwd()
-        works_dir = cwd / "works"
-        if not works_dir.exists():
-            _die("No inputs given and no works/ directory found.")
         works = scan_works(cwd)
         if not works:
-            _die("No manifests found in works/.")
+            _die("No manifests found in the project.")
         if len(works) > 1:
             names = ", ".join(w.title for w in works)
             _die(f"Multiple manifests found ({names}); specify one.")
