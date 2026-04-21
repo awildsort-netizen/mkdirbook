@@ -116,6 +116,23 @@ def _parse_lines(text: str) -> list[str]:
     return text.split("\n")
 
 
+def _looks_like_explicit_verse_block(lines: Sequence[str]) -> bool:
+    """True when a paragraph already uses hard breaks like verse.
+
+    This treats explicit trailing double-spaces as an author signal. When most
+    non-final lines in a block already use them, prefer verse handling even if
+    the statistical classifier would call the block prose.
+    """
+    usable = [line for line in lines if line.strip() and not _SKIP_RE.match(line)]
+    if len(usable) < 3:
+        return False
+    candidates = usable[:-1]
+    if len(candidates) < 2:
+        return False
+    explicit = sum(1 for line in candidates if _has_two_trailing_spaces(line))
+    return explicit >= 2 and explicit * 2 >= len(candidates)
+
+
 def _clamp(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, value))
 
@@ -328,6 +345,17 @@ def analyse_line_breaks(text: str) -> list[LineBreakWarning]:
             for i in range(ws.start_line, ws.end_line):
                 line_poetry[i] = True
 
+    start = 0
+    while start < len(all_lines):
+        end = start
+        while end < len(all_lines) and all_lines[end].strip():
+            end += 1
+        if _looks_like_explicit_verse_block(all_lines[start:end]):
+            for i in range(start, end):
+                if all_lines[i].strip() and not _SKIP_RE.match(all_lines[i]):
+                    line_poetry[i] = True
+        start = end + 1
+
     for i, line in enumerate(all_lines):
         stripped = line.strip()
         if not stripped:
@@ -445,8 +473,9 @@ def process_poetry_breaks(content: str, line_break: str = "  ",
     """Add line breaks to poetry-like blocks within Markdown content.
 
     Uses the rolling-window statistical detector to classify blocks.
-    When *force* is True every block is treated as poetry regardless
-    of the detector (used when the file role is explicitly "poetry").
+    Blocks that already contain explicit hard breaks are also treated as verse.
+    When *force* is True every block is treated as poetry regardless of the
+    detector (used when the file role is explicitly "poetry").
 
     The last non-empty line of each paragraph never gets a trailing hard
     break because the following paragraph separator already provides it.
@@ -457,7 +486,7 @@ def process_poetry_breaks(content: str, line_break: str = "  ",
     for block in blocks:
         lines = block.splitlines()
         # Determine if this block is poetry
-        if force or detect_poetry(block, force=False):
+        if force or _looks_like_explicit_verse_block(lines) or detect_poetry(block, force=False):
             processed: list[str] = []
             last_idx = max((i for i, l in enumerate(lines) if l.strip()), default=-1)
             for i, line in enumerate(lines):

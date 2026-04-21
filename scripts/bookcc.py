@@ -19,7 +19,7 @@ Options:
   -t TITLE    Override manifest title
   -d DIR      Override output directory
   -T FILE     Override Jinja2 template for a format: -T html=templates/my.html.j2
-  -I          Interactive fix mode — prompt to fix line-break issues
+  -i, -I      Interactive fix mode — prompt to fix line-break issues
   -n          Dry run — show what would be compiled, don't write output
   -v          Verbose (show chapter list and template resolution)
   --version   Print version and exit
@@ -33,6 +33,7 @@ Examples:
 """
 
 import argparse
+import contextlib
 import shutil
 import subprocess
 import sys
@@ -93,8 +94,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("-T", dest="templates", action="append", default=[],
                    metavar="FMT=FILE",
                    help="Template override, e.g. -T html=templates/my.html.j2")
-    p.add_argument("-I", dest="interactive", action="store_true",
-                   help="Interactive fix mode — prompt to fix line-break issues")
+    p.add_argument("-i", "-I", dest="interactive", action="store_true",
+                    help="Interactive fix mode — prompt to fix line-break issues")
     p.add_argument("-n", dest="dry_run", action="store_true",
                    help="Dry run — don't write output")
     p.add_argument("-v", dest="verbose", action="store_true",
@@ -197,6 +198,37 @@ def _warn(msg: str) -> None:
     print(f"bookcc: warning: {msg}", file=sys.stderr)
 
 
+class _WarningTracker:
+    """Pass-through stderr wrapper that counts warning lines."""
+
+    def __init__(self, stream) -> None:
+        self.stream = stream
+        self.warning_count = 0
+        self._pending = ""
+
+    def write(self, text: str) -> int:
+        self.stream.write(text)
+        self._pending += text
+        while "\n" in self._pending:
+            line, self._pending = self._pending.split("\n", 1)
+            if line.startswith("bookcc: warning:") or line.startswith("warning  "):
+                self.warning_count += 1
+        return len(text)
+
+    def flush(self) -> None:
+        self.stream.flush()
+
+    def isatty(self) -> bool:
+        return self.stream.isatty()
+
+    @property
+    def encoding(self):
+        return getattr(self.stream, "encoding", None)
+
+    def fileno(self) -> int:
+        return self.stream.fileno()
+
+
 # ── Manifest construction ─────────────────────────────────────────────────────
 
 def _manifest_from_files(files: list[Path], title: str) -> tuple[Manifest, Path]:
@@ -220,9 +252,7 @@ def _manifest_from_files(files: list[Path], title: str) -> tuple[Manifest, Path]
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-def main(argv: list[str] | None = None) -> int:
-    args = _parse_args(argv if argv is not None else sys.argv[1:])
-
+def _main_impl(args: argparse.Namespace) -> int:
     # ── Separate inputs into manifest and md files ────────────────────────────
     manifest_inputs = [Path(i) for i in args.inputs if i.endswith(".json")]
     md_inputs       = [Path(i) for i in args.inputs if i.endswith(".md")]
@@ -246,11 +276,9 @@ def main(argv: list[str] | None = None) -> int:
         if md_inputs:
             _warn("Extra .md files ignored when a manifest is provided.")
     elif md_inputs:
-        # Ad-hoc manifest from files on command line
         title = args.title or "Untitled"
         manifest, base = _manifest_from_files([p.resolve() for p in md_inputs], title)
     else:
-        # No inputs: scan the project for a single manifest
         cwd = Path.cwd()
         works = scan_works(cwd)
         if not works:
@@ -264,7 +292,6 @@ def main(argv: list[str] | None = None) -> int:
         if err:
             _warn(err)
 
-    # ── Apply overrides ────────────────────────────────────────────────────────
     if args.title:
         manifest.title = args.title
         if not manifest.output_name:
@@ -281,7 +308,6 @@ def main(argv: list[str] | None = None) -> int:
         custom_templates[fmt_t] = tfile
     manifest.custom_templates = custom_templates
 
-    # ── Validate inputs ────────────────────────────────────────────────────────
     chapters = _build_chapter_list(base, manifest)
     skipped = [e.path for e in manifest.files
                if e.enabled and e.role not in ("excluded", "template")
@@ -292,7 +318,6 @@ def main(argv: list[str] | None = None) -> int:
     if not chapters:
         _die("No exportable chapters found.")
 
-    # ── Interactive fix mode (-I) ───────────────────────────────────────────────────────
     if args.interactive:
         any_fixed = False
         enabled = [
@@ -308,12 +333,10 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  Saved {e.path}", file=sys.stderr)
                 any_fixed = True
         if any_fixed:
-            # Rebuild chapter list after fixes
             chapters = _build_chapter_list(base, manifest)
             print("  Chapter list rebuilt after fixes.", file=sys.stderr)
 
-    # ── Resolve outputs ────────────────────────────────────────────────────────────
-    outputs = _resolve_outputs(args, manifest)  # Verbose: show plan
+    outputs = _resolve_outputs(args, manifest)
     if args.verbose or args.dry_run:
         print(f"  title    {manifest.title}")
         print(f"  base     {base}")
@@ -329,21 +352,13 @@ def main(argv: list[str] | None = None) -> int:
         if args.dry_run:
             return 0
 
-    # ── Render combined markdown once (reused by pdf/docx/md) ─────────────────
     rendered_md: str | None = None
     combined_path: Path | None = None
-
     fmts_needed = {fmt for fmt, _ in outputs}
-
-    # Fix: "tw" removed — TiddlyWiki does not use rendered_md
-    # Pass the pre-built chapters list to avoid re-running _build_chapter_list
-    # (and re-emitting its warnings) for every format.
     if fmts_needed & {"pdf", "docx", "md"}:
         rendered_md = render_book(base, manifest, "md", _chapters=chapters)
 
-    # ── Produce outputs ────────────────────────────────────────────────────────
     errors = 0
-
     for fmt, dest_arg in outputs:
         dest = _dest_for(fmt, dest_arg, manifest, base, args.outdir)
 
@@ -373,7 +388,6 @@ def main(argv: list[str] | None = None) -> int:
             assert rendered_md is not None
             if not shutil.which("pandoc"):
                 _die("pandoc not found. Install: https://pandoc.org/installing.html")
-            # Write combined.md to a temp location next to dest
             combined_path = dest.parent / "_bookcc_combined.md"
             combined_path.write_text(rendered_md, encoding="utf-8")
             cmd = ["pandoc", str(combined_path), "-o", str(dest)]
@@ -394,6 +408,21 @@ def main(argv: list[str] | None = None) -> int:
                     combined_path.unlink()
 
     return errors
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv if argv is not None else sys.argv[1:])
+    tracker = _WarningTracker(sys.stderr)
+    try:
+        with contextlib.redirect_stderr(tracker):
+            exit_code = _main_impl(args)
+    except SystemExit:
+        if tracker.warning_count:
+            print("bookcc: note: run with -i to interactively fix issues.", file=sys.stderr)
+        raise
+    if tracker.warning_count:
+        print("bookcc: note: run with -i to interactively fix issues.", file=sys.stderr)
+    return exit_code
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-#!.venv/bin/python
+#!/usr/bin/env python3
 """
 bookman.py -- Book Manifest Manager
 
@@ -56,6 +56,15 @@ def _title_to_slug(title: str) -> str:
     """Convert a title to a filesystem-safe slug."""
     slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
     return slug or "untitled"
+
+
+def _display_title(text: str) -> str:
+    """Reduce simple inline Markdown to readable plain text for labels."""
+    text = re.sub(r"!\[([^\]]*)\]\([^)]+\)", r"\1", text)
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    text = re.sub(r"\[\^([^\]]+)\]", r"\1", text)
+    text = re.sub(r"[*_`~]+", "", text)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def manifest_path_for(base: Path, title: str) -> Path:
@@ -1392,6 +1401,8 @@ _BUILTIN_MD_TEMPLATE = """\
 ---
 title: "{{ title }}"
 date: {{ date }}
+toc: true
+toc-depth: 2
 ---
 {% for ch in chapters %}{{ render(ch) }}
 {% if not loop.last %}
@@ -1403,13 +1414,13 @@ date: {{ date }}
 
 _BUILTIN_HTML_TEMPLATE = """\
 {%- macro render_chapter(ch) -%}
-<section class="chapter">
+<section id="{{ ch.anchor_id }}" class="chapter">
 {% if ch.num is not none %}<p class="chapter-label">Chapter {{ ch.num }}</p>{% endif %}
-{{ ch.content_html | markdown | safe }}
+{{ ch.content_html | safe }}
 </section>
 {%- endmacro -%}
 {%- macro render_default(ch) -%}
-<section data-role="{{ ch.role }}">{{ ch.content_html | markdown | safe }}</section>
+<section id="{{ ch.anchor_id }}" data-role="{{ ch.role }}">{{ ch.content_html | safe }}</section>
 {%- endmacro -%}
 {%- macro render(ch) -%}
 {%- if ch.role == "chapter" %}{{ render_chapter(ch) }}{%- else %}{{ render_default(ch) }}{%- endif %}
@@ -1418,9 +1429,15 @@ _BUILTIN_HTML_TEMPLATE = """\
 <style>body{font-family:Georgia,serif;max-width:700px;margin:2em auto;padding:0 1.5em;line-height:1.7}
 .chapter-label{font-size:.8em;text-transform:uppercase;letter-spacing:.1em;color:#999}
 .cover{text-align:center;margin:3em 0}.cover h1{font-size:3em}
-hr{border:none;border-top:1px solid #ddd;margin:2.5em 0}</style>
+nav.toc{border-top:1px solid #ddd;border-bottom:1px solid #ddd;padding:1.5em 0;margin:0 0 2.5em}
+nav.toc h2{margin-top:0;margin-bottom:.8em}nav.toc ol{margin:0;padding-left:1.4em}
+nav.toc li+li{margin-top:.35em}.toc-role{color:#777;font-size:.92em}
+hr{border:none;border-top:1px solid #ddd;margin:2.5em 0}.arithmatex{overflow-x:auto}</style>
+<script>window.MathJax={tex:{inlineMath:[["\\\\(","\\\\)"]],displayMath:[["\\\\[","\\\\]"]],processEscapes:true,processEnvironments:true},options:{skipHtmlTags:["script","noscript","style","textarea","pre","code"]}};</script>
+<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
 </head><body>
 <div class="cover"><h1>{{ title }}</h1><p>{{ date }}</p></div>
+{% if chapters %}<nav class="toc" aria-labelledby="table-of-contents-title"><h2 id="table-of-contents-title">Table of Contents</h2><ol>{% for ch in chapters %}<li class="toc-{{ ch.role }}"><a href="#{{ ch.anchor_id }}">{{ ch.title }}</a>{% if ch.toc_prefix %} <span class="toc-role">{{ ch.toc_prefix }}</span>{% endif %}</li>{% endfor %}</ol></nav>{% endif %}
 {% for ch in chapters %}{{ render(ch) }}{% if not loop.last %}<hr>{% endif %}{% endfor %}
 </body></html>
 """
@@ -1473,7 +1490,15 @@ def _render_markdown(text: str) -> str:
     """Convert markdown text to HTML. Uses the markdown package if available."""
     try:
         import markdown as _md
-        return _md.markdown(text, extensions=["extra", "sane_lists"])
+        extensions = ["extra", "sane_lists"]
+        extension_configs: dict[str, dict[str, bool]] = {}
+        try:
+            import pymdownx.arithmatex  # noqa: F401
+            extensions.append("pymdownx.arithmatex")
+            extension_configs["pymdownx.arithmatex"] = {"generic": True}
+        except ImportError:
+            pass
+        return _md.markdown(text, extensions=extensions, extension_configs=extension_configs)
     except ImportError:
         # Minimal fallback: wrap paragraphs in <p>
         import re
@@ -1497,6 +1522,7 @@ def _build_chapter_list(base: Path, manifest: "Manifest") -> list[dict]:
             num = None
         content = (base / e.path).read_text(encoding="utf-8").strip()
         first_line = content.splitlines()[0].lstrip("# ").strip() if content else Path(e.path).stem
+        display_title = _display_title(first_line) or Path(e.path).stem
         force_poetry = e.role == "poetry"
         is_poetry = _detect_poetry(content, force=force_poetry)
         content_md = _process_poetry_breaks(content, "  ", force=is_poetry)
@@ -1506,10 +1532,12 @@ def _build_chapter_list(base: Path, manifest: "Manifest") -> list[dict]:
         for w in lb_warnings:
             print(f"warning  {e.path}: {w.message}", file=sys.stderr)
         chapters.append({
-            "title": first_line,
+            "title": display_title,
             "filename": e.path,
             "role": e.role,
             "num": num,
+            "anchor_id": f"{_title_to_slug(Path(e.path).stem)}-{len(chapters) + 1}",
+            "toc_prefix": f"Chapter {num}" if num is not None else ROLES.get(e.role, ("", "", e.role.title()))[2],
             "content": content,
             "content_md": content_md,
             "content_html_raw": content_html_raw,
@@ -1532,8 +1560,16 @@ def render_book(base: Path, manifest: "Manifest", fmt: str,
     template_src = _resolve_template(base, manifest, fmt)
     try:
         import markdown as _md_pkg
+        extensions = ["extra", "sane_lists"]
+        extension_configs: dict[str, dict[str, bool]] = {}
+        try:
+            import pymdownx.arithmatex  # noqa: F401
+            extensions.append("pymdownx.arithmatex")
+            extension_configs["pymdownx.arithmatex"] = {"generic": True}
+        except ImportError:
+            pass
         def _markdown_filter(text: str) -> str:
-            return _md_pkg.markdown(text, extensions=["extra", "sane_lists"])
+            return _md_pkg.markdown(text, extensions=extensions, extension_configs=extension_configs)
     except ImportError:
         def _markdown_filter(text: str) -> str:
             # Fallback: wrap in <p> if markdown not installed

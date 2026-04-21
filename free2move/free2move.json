@@ -13,25 +13,25 @@
       "note": ""
     },
     {
-      "path": "free2move/astold.md",
-      "role": "chapter",
-      "enabled": true,
-      "note": ""
-    },
-    {
-      "path": "free2move/exit0.md",
-      "role": "chapter",
-      "enabled": true,
-      "note": ""
-    },
-    {
       "path": "free2move/prologue.md",
       "role": "prologue",
       "enabled": true,
       "note": ""
     },
     {
+      "path": "free2move/astold.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
       "path": "free2move/antclock.md",
+      "role": "chapter",
+      "enabled": true,
+      "note": ""
+    },
+    {
+      "path": "free2move/exit0.md",
       "role": "chapter",
       "enabled": true,
       "note": ""

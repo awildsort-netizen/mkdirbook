@@ -4,11 +4,13 @@
 #   make / make out     Export html and docx
 #   make html/docx      Export a single format
 
-PYTHON   := ../.venv/bin/python
 BOOKCC   := ../scripts/bookcc.py
 MANIFEST := newsletter.json
+VENV_PY  := ../.venv/bin/python3
+VENV_BIN := $(abspath ../.venv/bin)
 
 export PYTHONPYCACHEPREFIX := ../scripts/__pycache__
+export PATH := $(VENV_BIN):$(PATH)
 
 .DEFAULT_GOAL := out
 
@@ -16,12 +18,12 @@ export PYTHONPYCACHEPREFIX := ../scripts/__pycache__
 
 out: html docx
 
-html: $(PYTHON)
-	$(PYTHON) $(BOOKCC) $(MANIFEST) -f html
+html: $(VENV_PY)
+	$(BOOKCC) $(MANIFEST) -f html
 
-docx: $(PYTHON)
-	$(PYTHON) $(BOOKCC) $(MANIFEST) -f docx
+docx: $(VENV_PY)
+	$(BOOKCC) $(MANIFEST) -f docx
 
-$(PYTHON):
+$(VENV_PY):
 	@echo "Virtual environment not found. Run: make setup"
 	@exit 1

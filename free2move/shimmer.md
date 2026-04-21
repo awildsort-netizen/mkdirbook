@@ -4,7 +4,7 @@ In twelve-step programs, the members think of themselves like the last exit befo
 
 In truth, at least in my limited experience as a gay man who flickered on and off through the rooms like an LED lightbulb screwed into a linear ramp circuit, the rooms have something amazing to offer everyone: a third place. No, not like in a contest; a place that isn't home and isn't work where you can actually find human connection. A place that isn't the hellscape of dating apps. The third place is the holy grail of late-capital loneliness.
 
-Unfortunately, powerful artifacts are guarded by monsters, and the monsters made minced meat of my pork chops. The last exit was not the one I could take. Fortunately, my spiritual guides[1] had other plans for me. Thank God, um, the gods, er, them!
+Unfortunately, powerful artifacts are guarded by monsters, and the monsters made minced meat of my pork chops. The last exit was not the one I could take. Fortunately, my spiritual guides[^1] had other plans for me. Thank God, um, the gods, er, them!
 
 I am in a different sort of recovery.
 
@@ -16,4 +16,4 @@ I believe that I am here for a reason, that my existence matters. I believe that
 
 It is one thing to say these words. It is another to hold them as truth. They are the words I carry that carry me back. These words started as feelings that shimmered and sparkled at me my whole life, every time I was met with love when I had failed and thought myself earned spite. Now I give them freely, hoping my beloved ones will be reminded of their own true love inside themselves.
 
-[1]: Thor, Loki, Odin, YWH, Yeshua, Athena, Poseidon, Hecate, my ancestors, the dead, Gaia, the trees, the crows, Pan and demons in balance...okay. This list is starting to feel like one of those "begat" chains in the Bible. I always wondered how such enumerations ever made it into our ancient texts, and now I see it is a lot like an acceptance speech at the Grammy's integral over human civilization.
+[^1]: Thor, Loki, Odin, YWH, Yeshua, Athena, Poseidon, Hecate, my ancestors, the dead, Gaia, the trees, the crows, Pan and demons in balance...okay. This list is starting to feel like one of those "begat" chains in the Bible. I always wondered how such enumerations ever made it into our ancient texts, and now I see it is a lot like an acceptance speech at the Grammy's integral over human civilization.

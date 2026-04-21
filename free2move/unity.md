@@ -63,15 +63,15 @@ of my own story to make your own job easier.
 
 ### Mini-Appendix: Pirates of Peace
 
-I am the very model of a modern major depressia
-Anxiety was general but now I think agora phobia
-I laid waste to my house it was not glorious
-I think I have a real problem can someone help me
+I am the very model of a modern major depressia  
+Anxiety was general but now I think agora phobia  
+I laid waste to my house it was not glorious  
+I think I have a real problem can someone help me  
 NO they gasped
 
-We'll help you in the way that we know how
-So stop your crying please
-The way you asked for help does not fit our model of patriarchy
-We asked you once we asked you twice
-Now we will violate your rights
-We are a broken model of a contract pyrrhic victorious!
+We'll help you in the way that we know how  
+So stop your crying please  
+The way you asked for help does not fit our model of patriarchy  
+We asked you once we asked you twice  
+Now we will violate your rights  
+We are a broken model of a contract pyrrhic victorious!  
