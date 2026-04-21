@@ -2,7 +2,7 @@
 
 In twelve-step programs, the members think of themselves like the last exit before that long stretch from San Francisco to Bakersfield California, if you get my drift. You choose the rooms with the sponsors and the stories because you're out of gas, out of money, and out of thumbs (sclerosed veins run tolls down their own roads). People come for the court orders, stay for the coffee and community.
 
-In truth, at least in my limited experience as a gay man who flickered on and off through the rooms like a LED lightbulb screwed into a linear ramp circuit, the rooms have something amazing to offer everyone: a third place. No, not like in a contest; a place that isn't home and isn't work where you can actually find human connection. A place that isn't the hellscape of dating apps. The third place is the holy grail of late-capital loneliness.
+In truth, at least in my limited experience as a gay man who flickered on and off through the rooms like an LED lightbulb screwed into a linear ramp circuit, the rooms have something amazing to offer everyone: a third place. No, not like in a contest; a place that isn't home and isn't work where you can actually find human connection. A place that isn't the hellscape of dating apps. The third place is the holy grail of late-capital loneliness.
 
 Unfortunately, powerful artifacts are guarded by monsters, and the monsters made minced meat of my pork chops. The last exit was not the one I could take. Fortunately, my spiritual guides[1] had other plans for me. Thank God, um, the gods, er, them!
 

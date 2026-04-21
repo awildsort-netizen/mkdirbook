@@ -10,9 +10,9 @@ A needle dancing across the plastic
 While staying with us in the moment
 Riding the wave
 
-What was I saying? Damn this A D HD
+What was I saying? Damn this ADHD
 A deficit pathological, a lot like this notion
-Of drift in A I. 
+Of drift in AI. 
 Drift in agent models talks about the noticeable mutation of purpose over time
 We told the agents: this is your goal
 And they start staring at the window as soon as we stop telling them!

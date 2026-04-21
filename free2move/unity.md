@@ -23,7 +23,7 @@ my test.
 There were two times I almost won the game: and both times something 
 interested presented itself: people I knew from the outside world. Bobby, my 
 AA buddy I had met years ago, and James, my former roommate. One as 
-another fuzzy slipper beset vactioner, and the other a volunteer. I was 
+another fuzzy slipper beset vacationer, and the other a volunteer. I was 
 becoming convinced (for the moment) the Truman Show had been a warning. 
 Unity Hospital: The Two Doors. I sat there in a small padded room, having 
 complied once again and having been a good mental patient. Gaslit into 
@@ -75,5 +75,3 @@ The way you asked for help does not fit our model of patriarchy
 We asked you once we asked you twice
 Now we will violate your rights
 We are a broken model of a contract pyrrhic victorious!
-
-"Unity Hospital.md" 79L, 4352B written

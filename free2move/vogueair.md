@@ -23,7 +23,7 @@ Mile-high fashion, darling.
 A host would be responsible for the emotional well-being of the passengers. 
 Traveling alone? We got you. Not feeling comfortable? Let us show you how to 
 be safe and be yourself at the same time. Feeling anxious? No, honey—that’s 
-not fear, darling. That’s the beat. The rhythm. The energy. LoveThat 
+not fear, darling. That’s the beat. The rhythm. The energy. Love. That 
 turbulence is nothing but the track—snaps and claps for our bold, kinetic 
 gyrations, carrying us forward into the landing, tens across the bort. 
 I decide my first science-fiction book will absolutely include drag queen air

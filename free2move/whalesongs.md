@@ -71,4 +71,4 @@ No moral. No lesson. Just sound traveling until it thins out.
 
 Witnessing—and then letting go without closing the heart. 
 
-Thank you, Joel, for letting me stand close to this moment with you.`
+Thank you, Joel, for letting me stand close to this moment with you.

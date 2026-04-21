@@ -44,7 +44,7 @@ order.
 
 ### How to use
 
-Run `make install` once from the project root to create the virtual environment.
+Run `make setup` once from the project root to create the virtual environment.
 
 After that, each book builds from its own directory:
 
@@ -56,3 +56,49 @@ make
 That default build writes **HTML** and **DOCX** output using the book's local manifest.
 
 From the project root, `make gui` still opens the textual manifest manager.
+
+### `.aswritten` whitelists and review
+
+For intentional glitches or voice-driven spellings, use one directory-level
+whitelist file named `.aswritten`.
+
+Use `# <filename>` to switch the active file:
+
+```text
+# free2move/iphonesig.md
+21: PS: {Cray??la} is now shipping
+
+# dtune/Drift Becoming.md
+13: Damn this {A D HD}
+```
+
+- if the first word on a line is an existing filename, that also switches the
+  active file
+- the number before `:` is an approximate line
+- text outside `{}` is local context for anchoring
+- text inside `{}` is the protected glitch span
+
+To review all changed markdown/text files from `HEAD`:
+
+```sh
+./scripts/aswritten.py
+```
+
+To review only specific files:
+
+```sh
+./scripts/aswritten.py newsletters/narcfall.md free2move/vogueair.md
+```
+
+The review command:
+
+- defaults to all changed non-dotfiles under the current directory
+- can be narrowed to specific filenames on the command line
+- refreshes `.aswritten` references against `HEAD`
+- automatically updates good fuzzy line references
+- offers to remove references it can no longer find
+- auto-reverts changes that already match accepted `.aswritten` rules
+- prints a note when it does that
+- prompts on the remaining diff lines to either accept the current change or
+  whitelist the `HEAD` version as written
+- appends new whitelist rules to `.aswritten` when you choose the whitelist path

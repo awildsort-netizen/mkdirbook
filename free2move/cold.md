@@ -25,6 +25,6 @@ train back.
 
 I was finally ready to be in a warm bed. 
 
-And I was finally ready to give up crystal.[edit]
+And I was finally ready to give up crystal.[^edit]
 
-edit: I was not finally ready to give up crystal.
+[^edit]: I was not finally ready to give up crystal.

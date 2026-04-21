@@ -23,5 +23,5 @@ docx: $(PYTHON)
 	$(PYTHON) $(BOOKCC) $(MANIFEST) -f docx
 
 $(PYTHON):
-	@echo "Virtual environment not found. Run: make install"
+	@echo "Virtual environment not found. Run: make setup"
 	@exit 1
