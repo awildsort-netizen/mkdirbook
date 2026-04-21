@@ -19,6 +19,7 @@ Options:
   -t TITLE    Override manifest title
   -d DIR      Override output directory
   -T FILE     Override Jinja2 template for a format: -T html=templates/my.html.j2
+  -I          Interactive fix mode — prompt to fix line-break issues
   -n          Dry run — show what would be compiled, don't write output
   -v          Verbose (show chapter list and template resolution)
   --version   Print version and exit
@@ -49,6 +50,11 @@ from bookman import (  # noqa: E402
     render_book,
     render_book_tw,
     scan_works,
+)
+from poetry import (  # noqa: E402
+    analyse_line_breaks,
+    generate_fixes,
+    interactive_fix,
 )
 
 __version__ = "1.0.0"
@@ -87,6 +93,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("-T", dest="templates", action="append", default=[],
                    metavar="FMT=FILE",
                    help="Template override, e.g. -T html=templates/my.html.j2")
+    p.add_argument("-I", dest="interactive", action="store_true",
+                   help="Interactive fix mode — prompt to fix line-break issues")
     p.add_argument("-n", dest="dry_run", action="store_true",
                    help="Dry run — don't write output")
     p.add_argument("-v", dest="verbose", action="store_true",
@@ -284,10 +292,28 @@ def main(argv: list[str] | None = None) -> int:
     if not chapters:
         _die("No exportable chapters found.")
 
-    # ── Resolve outputs ────────────────────────────────────────────────────────
-    outputs = _resolve_outputs(args, manifest)
+    # ── Interactive fix mode (-I) ───────────────────────────────────────────────────────
+    if args.interactive:
+        any_fixed = False
+        enabled = [
+            e for e in manifest.files
+            if e.enabled and e.role not in ("excluded", "template") and e.exists_at(base)
+        ]
+        for e in enabled:
+            filepath = base / e.path
+            content = filepath.read_text(encoding="utf-8")
+            result = interactive_fix(e.path, content)
+            if result is not None:
+                filepath.write_text(result, encoding="utf-8")
+                print(f"  Saved {e.path}", file=sys.stderr)
+                any_fixed = True
+        if any_fixed:
+            # Rebuild chapter list after fixes
+            chapters = _build_chapter_list(base, manifest)
+            print("  Chapter list rebuilt after fixes.", file=sys.stderr)
 
-    # Verbose: show plan
+    # ── Resolve outputs ────────────────────────────────────────────────────────────
+    outputs = _resolve_outputs(args, manifest)  # Verbose: show plan
     if args.verbose or args.dry_run:
         print(f"  title    {manifest.title}")
         print(f"  base     {base}")

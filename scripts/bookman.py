@@ -1434,60 +1434,14 @@ _BUILTIN_TW_TEMPLATE = """\
 """
 
 
-# ---- Poetry Detection -------------------------------------------------------
+# ---- Poetry Detection (delegated to poetry.py) -----------------------------
 
-_POETRY_SKIP_RE = None
-
-def _poetry_skip_re():
-    global _POETRY_SKIP_RE
-    if _POETRY_SKIP_RE is None:
-        import re
-        _POETRY_SKIP_RE = re.compile(r"^(#{1,6}\s|[-*+]\s|\d+\.\s|>\s|```|\s{4})")
-    return _POETRY_SKIP_RE
-
-
-def _detect_block_poetry(lines: list) -> bool:
-    """Return True if a list of content lines looks like a poetry block.
-
-    Only interior lines (not the last line of the paragraph) are used for
-    the short-line heuristic: paragraph-closing lines are often short even in
-    prose and should not bias detection.
-    """
-    skip = _poetry_skip_re()
-    filtered = [l for l in lines if l.strip() and not skip.match(l)]
-    if len(filtered) < 3:
-        return False
-    body = filtered[:-1]  # exclude the paragraph-final line
-    return max(len(l.rstrip()) for l in body) < 100
-
-
-def _process_poetry_breaks(content: str, line_break: str = "  ", force: bool = False) -> str:
-    """Add line breaks to poetry-like blocks within markdown content.
-
-    When *force* is True every block is treated as poetry regardless of the
-    automatic heuristic (used when the file role is explicitly \"poetry\").
-    The last non-empty line of each block never gets a trailing hard break
-    because the following paragraph separator already provides the break.
-    """
-    import re
-    skip = _poetry_skip_re()
-    blocks = re.split(r"\n\n+", content)
-    result = []
-    for block in blocks:
-        lines = block.splitlines()
-        filtered = [l for l in lines if l.strip() and not skip.match(l)]
-        if force or _detect_block_poetry(filtered):
-            processed = []
-            last_idx = max((i for i, l in enumerate(lines) if l.strip()), default=-1)
-            for i, line in enumerate(lines):
-                if line.strip() and i != last_idx:
-                    processed.append(line.rstrip() + line_break)
-                else:
-                    processed.append(line)
-            result.append("\n".join(processed))
-        else:
-            result.append(block)
-    return "\n\n".join(result)
+from poetry import (
+    detect_poetry as _detect_poetry,
+    process_poetry_breaks as _process_poetry_breaks,
+    analyse_line_breaks as _analyse_line_breaks,
+    poetry_scores as _poetry_scores,
+)
 
 
 def _resolve_template(base: Path, manifest: "Manifest", fmt: str) -> str:
@@ -1544,21 +1498,13 @@ def _build_chapter_list(base: Path, manifest: "Manifest") -> list[dict]:
         content = (base / e.path).read_text(encoding="utf-8").strip()
         first_line = content.splitlines()[0].lstrip("# ").strip() if content else Path(e.path).stem
         force_poetry = e.role == "poetry"
-        content_md = _process_poetry_breaks(content, "  ", force=force_poetry)
-        content_html_raw = _process_poetry_breaks(content, "  <br>", force=force_poetry)
-        is_poetry = force_poetry or content_md != content  # any block was processed
-        # Warn if poetry was detected/forced but no lines already carry two trailing spaces
-        if is_poetry:
-            lines = content.splitlines()
-            non_empty = [l for l in lines if l.strip()]
-            has_two_trailing = any(l.endswith("  ") for l in non_empty)
-            if not has_two_trailing:
-                print(
-                    f"warning  {e.path}: poetry detected but no lines end with two trailing "
-                    "spaces. Many Markdown viewers require exactly two trailing spaces to "
-                    "recognise a forced line break.",
-                    file=sys.stderr,
-                )
+        is_poetry = _detect_poetry(content, force=force_poetry)
+        content_md = _process_poetry_breaks(content, "  ", force=is_poetry)
+        content_html_raw = _process_poetry_breaks(content, "  <br>", force=is_poetry)
+        # Emit line-break warnings from the statistical detector
+        lb_warnings = _analyse_line_breaks(content)
+        for w in lb_warnings:
+            print(f"warning  {e.path}: {w.message}", file=sys.stderr)
         chapters.append({
             "title": first_line,
             "filename": e.path,
