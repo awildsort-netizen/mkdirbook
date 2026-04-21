@@ -1,12 +1,13 @@
 # mkdirbook -- project-level helpers
 #
 # Targets:
-#   make install        Create .venv, install deps
+#   make install        Create .venv, install deps, download TiddlyWiki shell
 #   make / make gui     Launch the manifest manager TUI
 #   make clean          Remove generated output
 #   make help           Show book build commands
 
 PYTHON  := .venv/bin/python
+BOOKCC  := scripts/bookcc.py
 BOOKMAN := scripts/bookman.py
 BOOKDIR := .
 
@@ -31,6 +32,8 @@ install:
 	python3 -m venv .venv
 	.venv/bin/pip install -r scripts/requirements.txt
 	chmod +x $(BOOKCC) $(BOOKMAN)
+	@echo "Downloading TiddlyWiki empty shell..."
+	curl -L -o templates/tiddlywiki_empty.html https://tiddlywiki.com/empty.html
 
 # Sentinel: remind the user to run make install if .venv is missing
 .venv:

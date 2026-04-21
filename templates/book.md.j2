@@ -3,7 +3,7 @@
 
 {%- macro render_chapter(ch) -%}
 {% if ch.num is not none %}
-*Chapter {{ ch.num }}*
+## Chapter {{ ch.num }}
 
 {% endif %}
 {{ ch.content_md }}

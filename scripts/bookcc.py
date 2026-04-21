@@ -2,7 +2,7 @@
 from __future__ import annotations
 """bookcc — book compiler
 
-gcc-style CLI for rendering book manifests to PDF, HTML, DOCX, or Markdown.
+gcc-style CLI for rendering book manifests to PDF, HTML, DOCX, Markdown, or TiddlyWiki.
 
 Usage:
   bookcc [OPTIONS] [MANIFEST] [FILE ...]
@@ -11,10 +11,10 @@ Usage:
   FILE ...   .md source files     (creates an ad-hoc manifest if no MANIFEST given)
 
 Options:
-  -o OUTPUT   Output path; extension selects format (.pdf .html .md .docx).
+  -o OUTPUT   Output path; extension selects format (.pdf .html .md .docx .tw.html).
               Repeat for multiple outputs:  -o book.pdf -o book.html
               Comma-suffix for multiple formats from one base: -o book.pdf,html,md
-  -f FMT      Format(s) using manifest output settings (pdf html md docx).
+  -f FMT      Format(s) using manifest output settings (pdf html md docx tw).
               Repeat or comma-separate: -f pdf,html
   -t TITLE    Override manifest title
   -d DIR      Override output directory
@@ -47,12 +47,13 @@ from bookman import (  # noqa: E402
     _title_to_slug,
     load_manifest,
     render_book,
+    render_book_tw,
     scan_works,
 )
 
 __version__ = "1.0.0"
 
-KNOWN_FMTS = {"pdf", "html", "md", "docx"}
+KNOWN_FMTS = {"pdf", "html", "md", "docx", "tw"}
 
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
@@ -60,7 +61,7 @@ KNOWN_FMTS = {"pdf", "html", "md", "docx"}
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="bookcc",
-        description="Compile a book manifest to PDF, HTML, DOCX, or Markdown.",
+        description="Compile a book manifest to PDF, HTML, DOCX, Markdown, or TiddlyWiki.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
@@ -78,7 +79,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
                    help="Output file; extension = format. Repeat or comma-suffix.")
     p.add_argument("-f", dest="fmts", action="append", default=[],
                    metavar="FMT",
-                   help="Format(s): pdf html md docx. Repeat or comma-separate.")
+                   help="Format(s): pdf html md docx tw. Repeat or comma-separate.")
     p.add_argument("-t", dest="title", default=None, metavar="TITLE",
                    help="Override title")
     p.add_argument("-d", dest="outdir", default=None, metavar="DIR",
@@ -110,14 +111,20 @@ def _resolve_outputs(args: argparse.Namespace, manifest: Manifest
         parts = out.split(",")
         base_out = parts[0].strip()
         base_path = Path(base_out)
-        ext = base_path.suffix.lstrip(".").lower()
+
+        # Recognise .tw.html as the tw format
+        if base_path.name.endswith(".tw.html"):
+            ext = "tw"
+        else:
+            ext = base_path.suffix.lstrip(".").lower()
 
         if ext in KNOWN_FMTS:
             result.append((ext, base_path))
         elif not ext:
             # bare name or dir: produce all known formats
-            for fmt in ("pdf", "html", "md", "docx"):
-                result.append((fmt, base_path.with_suffix(f".{fmt}")))
+            for fmt in ("pdf", "html", "md", "docx", "tw"):
+                suffix = ".tw.html" if fmt == "tw" else f".{fmt}"
+                result.append((fmt, base_path.with_suffix(suffix)))
         else:
             _die(f"Unknown format '.{ext}' in -o {out}")
 
@@ -126,7 +133,10 @@ def _resolve_outputs(args: argparse.Namespace, manifest: Manifest
             fmt = extra.strip().lower().lstrip(".")
             if fmt not in KNOWN_FMTS:
                 _die(f"Unknown format '{fmt}' in -o {out}")
-            result.append((fmt, base_path.with_suffix(f".{fmt}")))
+            if fmt == "tw":
+                result.append((fmt, base_path.with_name(base_path.stem.split(".")[0] + ".tw.html")))
+            else:
+                result.append((fmt, base_path.with_suffix(f".{fmt}")))
 
     # Explicit -f flags (use manifest output settings for path)
     for fspec in args.fmts:
@@ -142,6 +152,7 @@ def _resolve_outputs(args: argparse.Namespace, manifest: Manifest
         outdir  = Path(args.outdir or manifest.output_dir or f"out/{_title_to_slug(manifest.title)}")
         for fmt in ("pdf", "html", "md", "docx"):
             result.append((fmt, None))
+        # tw is opt-in only; not included in the default all-formats run
 
     return result
 
@@ -156,6 +167,9 @@ def _dest_for(fmt: str, dest: Path | None, manifest: Manifest,
     out_rel = outdir_override or manifest.output_dir or f"out/{_title_to_slug(manifest.title)}"
     out = base / out_rel
     out.mkdir(parents=True, exist_ok=True)
+    # TiddlyWiki output uses .tw.html extension to distinguish from regular HTML
+    if fmt == "tw":
+        return out / f"{outname}.tw.html"
     return out / f"{outname}.{fmt}"
 
 
@@ -295,6 +309,7 @@ def main(argv: list[str] | None = None) -> int:
 
     fmts_needed = {fmt for fmt, _ in outputs}
 
+    # Fix: "tw" removed — TiddlyWiki does not use rendered_md
     if fmts_needed & {"pdf", "docx", "md"}:
         rendered_md = render_book(base, manifest, "md")
 
@@ -315,6 +330,16 @@ def main(argv: list[str] | None = None) -> int:
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text(rendered_html, encoding="utf-8")
             print(f"{dest}")
+
+        elif fmt == "tw":
+            try:
+                rendered_tw = render_book_tw(base, manifest)
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_text(rendered_tw, encoding="utf-8")
+                print(f"{dest}")
+            except FileNotFoundError as exc:
+                print(f"bookcc: error: tw: {exc}", file=sys.stderr)
+                errors += 1
 
         elif fmt in ("pdf", "docx"):
             assert rendered_md is not None

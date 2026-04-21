@@ -1382,7 +1382,7 @@ class BookManApp(App):
 # ---- Jinja2 Render Engine ---------------------------------------------------
 
 _BUILTIN_MD_TEMPLATE = """\
-{%- macro render_chapter(ch) %}{% if ch.num is not none %}*Chapter {{ ch.num }}*
+{%- macro render_chapter(ch) %}{% if ch.num is not none %}## Chapter {{ ch.num }}
 
 {% endif %}{{ ch.content_md }}{% endmacro -%}
 {%- macro render_default(ch) %}{{ ch.content_md }}{% endmacro -%}
@@ -1423,6 +1423,14 @@ hr{border:none;border-top:1px solid #ddd;margin:2.5em 0}</style>
 <div class="cover"><h1>{{ title }}</h1><p>{{ date }}</p></div>
 {% for ch in chapters %}{{ render(ch) }}{% if not loop.last %}<hr>{% endif %}{% endfor %}
 </body></html>
+"""
+
+_BUILTIN_TW_TEMPLATE = """\
+{%- if ch.role == "chapter" and ch.num is not none -%}
+*Chapter {{ ch.num }}*
+
+{% endif -%}
+{{ ch.content_md }}
 """
 
 
@@ -1502,6 +1510,8 @@ def _resolve_template(base: Path, manifest: "Manifest", fmt: str) -> str:
     # 4. built-in fallback
     if fmt == "html":
         return _BUILTIN_HTML_TEMPLATE
+    if fmt == "tw":
+        return _BUILTIN_TW_TEMPLATE
     return _BUILTIN_MD_TEMPLATE
 
 
@@ -1583,6 +1593,136 @@ def render_book(base: Path, manifest: "Manifest", fmt: str) -> str:
     return env.from_string(template_src).render(**ctx)
 
 
+# ---- TiddlyWiki Renderer ---------------------------------------------------
+
+# Path to the bundled empty TiddlyWiki shell, relative to this script.
+# The shell is downloaded once and stored alongside the scripts.
+_TW_SHELL_PATH = Path(__file__).parent.parent / "templates" / "tiddlywiki_empty.html"
+
+
+def _load_tw_shell() -> tuple[str, str]:
+    """Load the TiddlyWiki empty HTML shell and return (before_store, after_store).
+
+    The shell is split at the <script class="tiddlywiki-tiddler-store"> tag.
+    The caller is responsible for injecting tiddlers into the JSON array and
+    reassembling the file.
+
+    Raises FileNotFoundError if the shell has not been downloaded yet.
+    """
+    if not _TW_SHELL_PATH.exists():
+        raise FileNotFoundError(
+            f"TiddlyWiki shell not found at {_TW_SHELL_PATH}.\n"
+            "Download it with:\n"
+            "  curl -L -o templates/tiddlywiki_empty.html https://tiddlywiki.com/empty.html"
+        )
+    content = _TW_SHELL_PATH.read_text(encoding="utf-8")
+    store_start = content.find('<script class="tiddlywiki-tiddler-store"')
+    if store_start == -1:
+        raise ValueError("Could not find tiddler store script tag in TiddlyWiki shell.")
+    tag_end = content.find(">", store_start) + 1
+    store_close = content.find("</script>", store_start)
+    return content[:tag_end], content[store_close:]
+
+
+def render_book_tw(base: Path, manifest: "Manifest") -> str:
+    """Render the book as a standalone TiddlyWiki HTML file.
+
+    Each enabled chapter becomes a separate tiddler with type=text/x-markdown.
+    A table-of-contents tiddler and a cover tiddler are also generated.
+    The tiddlers are injected into the existing TiddlyWiki core JSON store so
+    that the full TiddlyWiki UI (search, navigation, themes) is available.
+    """
+    import json as _json
+    from jinja2 import Environment, BaseLoader
+    from datetime import datetime
+
+    before_store, after_store = _load_tw_shell()
+
+    # Parse the existing store JSON from the shell
+    shell_content = _TW_SHELL_PATH.read_text(encoding="utf-8")
+    store_start = shell_content.find('<script class="tiddlywiki-tiddler-store"')
+    tag_end_pos = shell_content.find(">", store_start) + 1
+    store_close_pos = shell_content.find("</script>", store_start)
+    existing_json_str = shell_content[tag_end_pos:store_close_pos]
+    tiddlers: list[dict] = _json.loads(existing_json_str)
+
+    chapters = _build_chapter_list(base, manifest)
+    now_ts = datetime.now().strftime("%Y%m%d%H%M%S") + "000"
+    date_str = datetime.now().strftime("%Y-%m-%d")
+
+    # Load the per-tiddler content template (book.tw.j2)
+    tiddler_template_src = _resolve_template(base, manifest, "tw")
+    env = Environment(loader=BaseLoader(), keep_trailing_newline=True)
+    env.trim_blocks = True
+    env.lstrip_blocks = True
+
+    # Build a tiddler title list for the TOC and StoryList
+    chapter_titles: list[str] = []
+    seen_titles: dict[str, int] = {}  # for deduplication
+
+    for ch in chapters:
+        # Render the tiddler text using the per-chapter template
+        tiddler_text = env.from_string(tiddler_template_src).render(ch=ch)
+
+        # Sanitise the title: strip leading # characters (Markdown headings)
+        raw_title = ch["title"].lstrip("# ").strip() or Path(ch["filename"]).stem
+
+        # Deduplicate titles: append counter for collisions
+        if raw_title in seen_titles:
+            seen_titles[raw_title] += 1
+            raw_title = f"{raw_title} ({seen_titles[raw_title]})"
+        else:
+            seen_titles[raw_title] = 1
+
+        # Reject titles containing ]] which would break TiddlyWiki bracket syntax
+        if "]]" in raw_title:
+            raw_title = raw_title.replace("]]", "__")
+
+        tiddler: dict = {
+            "title": raw_title,
+            "text": tiddler_text,
+            "tags": ch["role"],
+            "type": "text/x-markdown",
+            "created": now_ts,
+            "modified": now_ts,
+            "mkdirbook-role": ch["role"],
+        }
+        if ch["num"] is not None:
+            tiddler["mkdirbook-chapter"] = str(ch["num"])
+        tiddlers.append(tiddler)
+        chapter_titles.append(raw_title)
+
+    # Cover / index tiddler — use WikiText type so [[links]] work
+    toc_lines = [f"! {manifest.title}", "", f"//Generated by mkdirbook on {date_str}//", ""]
+    for i, ch in enumerate(chapters):
+        raw_title = chapter_titles[i]
+        role_label = ch["role"].capitalize()
+        num_label = f" {ch['num']}" if ch["num"] is not None else ""
+        toc_lines.append(f"* ''{role_label}{num_label}:'' [[{raw_title}]]")
+    cover_tiddler: dict = {
+        "title": manifest.title,
+        "text": "\n".join(toc_lines),
+        "tags": "cover",
+        "type": "text/vnd.tiddlywiki",
+        "created": now_ts,
+        "modified": now_ts,
+    }
+    tiddlers.append(cover_tiddler)
+
+    # Update StoryList so the cover opens first — always wrap in [[ ]]
+    story_titles = [manifest.title] + chapter_titles
+    for t in tiddlers:
+        if isinstance(t, dict) and t.get("title") == "$:/StoryList":
+            t["list"] = " ".join(f"[[{ti}]]" for ti in story_titles[:5])
+            break
+
+    # Serialise — must escape < as \u003c inside a <script> tag per TW spec
+    new_json = _json.dumps(tiddlers, ensure_ascii=False, separators=(",", ":"))
+    new_json_escaped = new_json.replace("<", r"\u003c")
+
+    return before_store + new_json_escaped + after_store
+
+
 def export_book_cli(base: Path, manifest: Manifest, fmts: set[str]) -> None:
     """Run export pipeline without the GUI; prints progress to stdout."""
     out_rel = manifest.output_dir or f"out/{_title_to_slug(manifest.title)}"
@@ -1620,6 +1760,15 @@ def export_book_cli(base: Path, manifest: Manifest, fmts: set[str]) -> None:
         dest = out / f"{output_name}.html"
         dest.write_text(rendered_html, encoding="utf-8")
         print(f"ok  HTML -> {dest.name}")
+
+    if "tw" in fmts:
+        try:
+            rendered_tw = render_book_tw(base, manifest)
+            dest = out / f"{output_name}.tw.html"
+            dest.write_text(rendered_tw, encoding="utf-8")
+            print(f"ok  TiddlyWiki -> {dest.name}")
+        except FileNotFoundError as exc:
+            print(f"error  TiddlyWiki: {exc}", file=sys.stderr)
 
     if not fmts & {"pdf", "docx"}:
         return

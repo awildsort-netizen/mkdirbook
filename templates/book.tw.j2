@@ -1,0 +1,21 @@
+{#- book.tw.j2 — TiddlyWiki tiddler content template                          -#}
+{#-                                                                             -#}
+{#- This template renders the *text* field for a single tiddler.               -#}
+{#- It is called once per chapter; the surrounding TiddlyWiki HTML shell and   -#}
+{#- JSON tiddler store injection are handled by render_book_tw() in bookman.py.-#}
+{#-                                                                             -#}
+{#- Available variables:                                                        -#}
+{#-   ch.title        — first heading line of the file                         -#}
+{#-   ch.role         — chapter / prologue / epilogue / introduction / poetry  -#}
+{#-   ch.num          — chapter number (int) or None                           -#}
+{#-   ch.content_md   — poetry-processed Markdown text                         -#}
+{#-   ch.is_poetry    — True if the file was detected as / assigned poetry     -#}
+{#-                                                                             -#}
+{#- The output is stored as type="text/x-markdown" so TiddlyWiki renders it    -#}
+{#- with the built-in Markdown plugin (if installed) or displays it as plain   -#}
+{#- text. Users who prefer native WikiText can change the type field.          -#}
+{%- if ch.role == "chapter" and ch.num is not none -%}
+*Chapter {{ ch.num }}*
+
+{% endif -%}
+{{ ch.content_md }}

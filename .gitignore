@@ -28,3 +28,4 @@ uv.lock
 *.egg-info/
 dist/
 build/
+templates/tiddlywiki_empty.html
