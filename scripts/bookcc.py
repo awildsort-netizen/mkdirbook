@@ -310,8 +310,10 @@ def main(argv: list[str] | None = None) -> int:
     fmts_needed = {fmt for fmt, _ in outputs}
 
     # Fix: "tw" removed — TiddlyWiki does not use rendered_md
+    # Pass the pre-built chapters list to avoid re-running _build_chapter_list
+    # (and re-emitting its warnings) for every format.
     if fmts_needed & {"pdf", "docx", "md"}:
-        rendered_md = render_book(base, manifest, "md")
+        rendered_md = render_book(base, manifest, "md", _chapters=chapters)
 
     # ── Produce outputs ────────────────────────────────────────────────────────
     errors = 0
@@ -326,14 +328,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{dest}")
 
         elif fmt == "html":
-            rendered_html = render_book(base, manifest, "html")
+            rendered_html = render_book(base, manifest, "html", _chapters=chapters)
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text(rendered_html, encoding="utf-8")
             print(f"{dest}")
 
         elif fmt == "tw":
             try:
-                rendered_tw = render_book_tw(base, manifest)
+                rendered_tw = render_book_tw(base, manifest, _chapters=chapters)
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_text(rendered_tw, encoding="utf-8")
                 print(f"{dest}")

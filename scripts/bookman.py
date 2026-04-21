@@ -619,11 +619,11 @@ class ExportScreen(ModalScreen):
         output_name = self.manifest.output_name or _title_to_slug(self.manifest.title)
 
         # Render md via Jinja2 template
+        _chapters = _build_chapter_list(self.base, self.manifest)
         rendered_md = render_book(self.base, self.manifest, "md")
         combined_path = out / "combined.md"
         combined_path.write_text(rendered_md, encoding="utf-8")
-        chapter_count = len(_build_chapter_list(self.base, self.manifest))
-        self._log(f"ok  Rendered {chapter_count} chapters -> combined.md")
+        self._log(f"ok  Rendered {len(_chapters)} chapters -> combined.md")
 
         if fmts["md"]:
             dest = out / f"{output_name}.md"
@@ -1547,6 +1547,18 @@ def _build_chapter_list(base: Path, manifest: "Manifest") -> list[dict]:
         content_md = _process_poetry_breaks(content, "  ", force=force_poetry)
         content_html_raw = _process_poetry_breaks(content, "  <br>", force=force_poetry)
         is_poetry = force_poetry or content_md != content  # any block was processed
+        # Warn if poetry was detected/forced but no lines already carry two trailing spaces
+        if is_poetry:
+            lines = content.splitlines()
+            non_empty = [l for l in lines if l.strip()]
+            has_two_trailing = any(l.endswith("  ") for l in non_empty)
+            if not has_two_trailing:
+                print(
+                    f"warning  {e.path}: poetry detected but no lines end with two trailing "
+                    "spaces. Many Markdown viewers require exactly two trailing spaces to "
+                    "recognise a forced line break.",
+                    file=sys.stderr,
+                )
         chapters.append({
             "title": first_line,
             "filename": e.path,
@@ -1561,8 +1573,13 @@ def _build_chapter_list(base: Path, manifest: "Manifest") -> list[dict]:
     return chapters
 
 
-def render_book(base: Path, manifest: "Manifest", fmt: str) -> str:
-    """Render the book using Jinja2, returning the rendered string."""
+def render_book(base: Path, manifest: "Manifest", fmt: str,
+                _chapters: list[dict] | None = None) -> str:
+    """Render the book using Jinja2, returning the rendered string.
+
+    Pass *_chapters* to reuse an already-built chapter list and avoid
+    running _build_chapter_list (and its warnings) a second time.
+    """
     from jinja2 import Environment, BaseLoader
     from datetime import datetime
 
@@ -1578,7 +1595,7 @@ def render_book(base: Path, manifest: "Manifest", fmt: str) -> str:
 
     env = Environment(loader=BaseLoader(), keep_trailing_newline=True)
     env.filters["markdown"] = _markdown_filter
-    chapters = _build_chapter_list(base, manifest)
+    chapters = _chapters if _chapters is not None else _build_chapter_list(base, manifest)
     body = "\n\n---\n\n".join(ch["content"] for ch in chapters)
     output_name = manifest.output_name or _title_to_slug(manifest.title)
     ctx = {
@@ -1624,13 +1641,17 @@ def _load_tw_shell() -> tuple[str, str]:
     return content[:tag_end], content[store_close:]
 
 
-def render_book_tw(base: Path, manifest: "Manifest") -> str:
+def render_book_tw(base: Path, manifest: "Manifest",
+                   _chapters: list[dict] | None = None) -> str:
     """Render the book as a standalone TiddlyWiki HTML file.
 
     Each enabled chapter becomes a separate tiddler with type=text/x-markdown.
     A table-of-contents tiddler and a cover tiddler are also generated.
     The tiddlers are injected into the existing TiddlyWiki core JSON store so
     that the full TiddlyWiki UI (search, navigation, themes) is available.
+
+    Pass *_chapters* to reuse an already-built chapter list and avoid
+    running _build_chapter_list (and its warnings) a second time.
     """
     import json as _json
     from jinja2 import Environment, BaseLoader
@@ -1646,7 +1667,7 @@ def render_book_tw(base: Path, manifest: "Manifest") -> str:
     existing_json_str = shell_content[tag_end_pos:store_close_pos]
     tiddlers: list[dict] = _json.loads(existing_json_str)
 
-    chapters = _build_chapter_list(base, manifest)
+    chapters = _chapters if _chapters is not None else _build_chapter_list(base, manifest)
     now_ts = datetime.now().strftime("%Y%m%d%H%M%S") + "000"
     date_str = datetime.now().strftime("%Y-%m-%d")
 
@@ -1670,7 +1691,13 @@ def render_book_tw(base: Path, manifest: "Manifest") -> str:
         # Deduplicate titles: append counter for collisions
         if raw_title in seen_titles:
             seen_titles[raw_title] += 1
-            raw_title = f"{raw_title} ({seen_titles[raw_title]})"
+            deduped = f"{raw_title} ({seen_titles[raw_title]})"
+            print(
+                f"warning  Duplicate tiddler title {raw_title!r} in {ch['filename']}; "
+                f"renamed to {deduped!r}.",
+                file=sys.stderr,
+            )
+            raw_title = deduped
         else:
             seen_titles[raw_title] = 1
 
@@ -1744,11 +1771,11 @@ def export_book_cli(base: Path, manifest: Manifest, fmts: set[str]) -> None:
     output_name = manifest.output_name or _title_to_slug(manifest.title)
 
     # Render md via Jinja2 template
-    rendered_md = render_book(base, manifest, "md")
+    chapters = _build_chapter_list(base, manifest)
+    rendered_md = render_book(base, manifest, "md", _chapters=chapters)
     combined_path = out / "combined.md"
     combined_path.write_text(rendered_md, encoding="utf-8")
-    exportable_count = len(_build_chapter_list(base, manifest))
-    print(f"ok  Rendered {exportable_count} chapters -> combined.md")
+    print(f"ok  Rendered {len(chapters)} chapters -> combined.md")
 
     if "md" in fmts:
         dest = out / f"{output_name}.md"
@@ -1756,14 +1783,14 @@ def export_book_cli(base: Path, manifest: Manifest, fmts: set[str]) -> None:
         print(f"ok  Markdown -> {dest.name}")
 
     if "html" in fmts:
-        rendered_html = render_book(base, manifest, "html")
+        rendered_html = render_book(base, manifest, "html", _chapters=chapters)
         dest = out / f"{output_name}.html"
         dest.write_text(rendered_html, encoding="utf-8")
         print(f"ok  HTML -> {dest.name}")
 
     if "tw" in fmts:
         try:
-            rendered_tw = render_book_tw(base, manifest)
+            rendered_tw = render_book_tw(base, manifest, _chapters=chapters)
             dest = out / f"{output_name}.tw.html"
             dest.write_text(rendered_tw, encoding="utf-8")
             print(f"ok  TiddlyWiki -> {dest.name}")
