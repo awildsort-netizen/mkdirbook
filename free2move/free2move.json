@@ -3,6 +3,7 @@
   "version": 1,
   "output_dir": "out/free2move",
   "output_name": "free2move",
+  "show_filenames": true,
   "output_name_template": "{{ output_name }}",
   "custom_templates": {},
   "files": [

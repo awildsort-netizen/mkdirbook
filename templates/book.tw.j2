@@ -18,4 +18,8 @@
 *Chapter {{ ch.num }}*
 
 {% endif -%}
+{%- if ch.show_filename -%}
+`{{ ch.source_filename }}`
+
+{% endif -%}
 {{ ch.content_md }}

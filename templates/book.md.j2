@@ -6,26 +6,50 @@
 ## Chapter {{ ch.num }}
 
 {% endif %}
+{% if ch.show_filename %}
+`{{ ch.source_filename }}`
+
+{% endif %}
 {{ ch.content_md }}
 {%- endmacro -%}
 
 {%- macro render_introduction(ch) -%}
+{% if ch.show_filename %}
+`{{ ch.source_filename }}`
+
+{% endif %}
 {{ ch.content_md }}
 {%- endmacro -%}
 
 {%- macro render_prologue(ch) -%}
+{% if ch.show_filename %}
+`{{ ch.source_filename }}`
+
+{% endif %}
 {{ ch.content_md }}
 {%- endmacro -%}
 
 {%- macro render_epilogue(ch) -%}
+{% if ch.show_filename %}
+`{{ ch.source_filename }}`
+
+{% endif %}
 {{ ch.content_md }}
 {%- endmacro -%}
 
 {%- macro render_appendix(ch) -%}
+{% if ch.show_filename %}
+`{{ ch.source_filename }}`
+
+{% endif %}
 {{ ch.content_md }}
 {%- endmacro -%}
 
 {%- macro render_default(ch) -%}
+{% if ch.show_filename %}
+`{{ ch.source_filename }}`
+
+{% endif %}
 {{ ch.content_md }}
 {%- endmacro -%}
 

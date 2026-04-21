@@ -124,6 +124,7 @@ class FileEntry:
     role: str = "chapter"
     enabled: bool = True
     note: str = ""
+    show_filename: bool = False
 
     def exists_at(self, base: Path) -> bool:
         return (base / self.path).exists()
@@ -135,6 +136,7 @@ class Manifest:
     version: int = MANIFEST_VERSION
     output_dir: str = ""
     output_name: str = ""
+    show_filenames: bool = False
     output_name_template: str = "{{ output_name }}"
     custom_templates: dict = field(default_factory=dict)
     files: list[FileEntry] = field(default_factory=list)
@@ -145,6 +147,7 @@ class Manifest:
             "version": self.version,
             "output_dir": self.output_dir,
             "output_name": self.output_name,
+            "show_filenames": self.show_filenames,
             "output_name_template": self.output_name_template,
             "custom_templates": self.custom_templates,
             "files": [asdict(f) for f in self.files],
@@ -161,6 +164,7 @@ class Manifest:
             version=data.get("version", MANIFEST_VERSION),
             output_dir=output_dir,
             output_name=output_name,
+            show_filenames=bool(data.get("show_filenames", False)),
             output_name_template=data.get("output_name_template", "{{ output_name }}"),
             custom_templates=data.get("custom_templates", {}),
             files=files,
@@ -1393,8 +1397,12 @@ class BookManApp(App):
 _BUILTIN_MD_TEMPLATE = """\
 {%- macro render_chapter(ch) %}{% if ch.num is not none %}## Chapter {{ ch.num }}
 
+{% endif %}{% if ch.show_filename %}`{{ ch.source_filename }}`
+
 {% endif %}{{ ch.content_md }}{% endmacro -%}
-{%- macro render_default(ch) %}{{ ch.content_md }}{% endmacro -%}
+{%- macro render_default(ch) %}{% if ch.show_filename %}`{{ ch.source_filename }}`
+
+{% endif %}{{ ch.content_md }}{% endmacro -%}
 {%- macro render(ch) -%}
 {%- if ch.role == "chapter" %}{{ render_chapter(ch) }}{%- else %}{{ render_default(ch) }}{%- endif %}
 {%- endmacro -%}
@@ -1416,11 +1424,12 @@ _BUILTIN_HTML_TEMPLATE = """\
 {%- macro render_chapter(ch) -%}
 <section id="{{ ch.anchor_id }}" class="chapter">
 {% if ch.num is not none %}<p class="chapter-label">Chapter {{ ch.num }}</p>{% endif %}
+{% if ch.show_filename %}<p class="source-filename">{{ ch.source_filename }}</p>{% endif %}
 {{ ch.content_html | safe }}
 </section>
 {%- endmacro -%}
 {%- macro render_default(ch) -%}
-<section id="{{ ch.anchor_id }}" data-role="{{ ch.role }}">{{ ch.content_html | safe }}</section>
+<section id="{{ ch.anchor_id }}" data-role="{{ ch.role }}">{% if ch.show_filename %}<p class="source-filename">{{ ch.source_filename }}</p>{% endif %}{{ ch.content_html | safe }}</section>
 {%- endmacro -%}
 {%- macro render(ch) -%}
 {%- if ch.role == "chapter" %}{{ render_chapter(ch) }}{%- else %}{{ render_default(ch) }}{%- endif %}
@@ -1428,6 +1437,7 @@ _BUILTIN_HTML_TEMPLATE = """\
 <!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>{{ title }}</title>
 <style>body{font-family:Georgia,serif;max-width:700px;margin:2em auto;padding:0 1.5em;line-height:1.7}
 .chapter-label{font-size:.8em;text-transform:uppercase;letter-spacing:.1em;color:#999}
+.source-filename{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.85em;color:#777;margin:-.1em 0 1em}
 .cover{text-align:center;margin:3em 0}.cover h1{font-size:3em}
 nav.toc{border-top:1px solid #ddd;border-bottom:1px solid #ddd;padding:1.5em 0;margin:0 0 2.5em}
 nav.toc h2{margin-top:0;margin-bottom:.8em}nav.toc ol{margin:0;padding-left:1.4em}
@@ -1445,6 +1455,10 @@ hr{border:none;border-top:1px solid #ddd;margin:2.5em 0}.arithmatex{overflow-x:a
 _BUILTIN_TW_TEMPLATE = """\
 {%- if ch.role == "chapter" and ch.num is not none -%}
 *Chapter {{ ch.num }}*
+
+{% endif -%}
+{%- if ch.show_filename -%}
+`{{ ch.source_filename }}`
 
 {% endif -%}
 {{ ch.content_md }}
@@ -1534,10 +1548,12 @@ def _build_chapter_list(base: Path, manifest: "Manifest") -> list[dict]:
         chapters.append({
             "title": display_title,
             "filename": e.path,
+            "source_filename": e.path,
             "role": e.role,
             "num": num,
             "anchor_id": f"{_title_to_slug(Path(e.path).stem)}-{len(chapters) + 1}",
             "toc_prefix": f"Chapter {num}" if num is not None else ROLES.get(e.role, ("", "", e.role.title()))[2],
+            "show_filename": manifest.show_filenames or e.show_filename,
             "content": content,
             "content_md": content_md,
             "content_html_raw": content_html_raw,

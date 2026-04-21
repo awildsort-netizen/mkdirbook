@@ -5,6 +5,7 @@
 {%- macro render_chapter(ch) -%}
 <section id="{{ ch.anchor_id }}" class="chapter" data-role="chapter">
 {% if ch.num is not none %}<p class="chapter-label">Chapter {{ ch.num }}</p>{% endif %}
+{% if ch.show_filename %}<p class="source-filename">{{ ch.source_filename }}</p>{% endif %}
 {{ ch.content_html | safe }}
 </section>
 {%- endmacro -%}
@@ -12,6 +13,7 @@
 {%- macro render_introduction(ch) -%}
 <section id="{{ ch.anchor_id }}" class="introduction" data-role="introduction">
 <p class="role-label">Introduction</p>
+{% if ch.show_filename %}<p class="source-filename">{{ ch.source_filename }}</p>{% endif %}
 {{ ch.content_html | safe }}
 </section>
 {%- endmacro -%}
@@ -19,6 +21,7 @@
 {%- macro render_prologue(ch) -%}
 <section id="{{ ch.anchor_id }}" class="prologue" data-role="prologue">
 <p class="role-label">Prologue</p>
+{% if ch.show_filename %}<p class="source-filename">{{ ch.source_filename }}</p>{% endif %}
 {{ ch.content_html | safe }}
 </section>
 {%- endmacro -%}
@@ -26,6 +29,7 @@
 {%- macro render_epilogue(ch) -%}
 <section id="{{ ch.anchor_id }}" class="epilogue" data-role="epilogue">
 <p class="role-label">Epilogue</p>
+{% if ch.show_filename %}<p class="source-filename">{{ ch.source_filename }}</p>{% endif %}
 {{ ch.content_html | safe }}
 </section>
 {%- endmacro -%}
@@ -33,12 +37,14 @@
 {%- macro render_appendix(ch) -%}
 <section id="{{ ch.anchor_id }}" class="appendix" data-role="appendix">
 <p class="role-label">Appendix</p>
+{% if ch.show_filename %}<p class="source-filename">{{ ch.source_filename }}</p>{% endif %}
 {{ ch.content_html | safe }}
 </section>
 {%- endmacro -%}
 
 {%- macro render_default(ch) -%}
 <section id="{{ ch.anchor_id }}" data-role="{{ ch.role }}">
+{% if ch.show_filename %}<p class="source-filename">{{ ch.source_filename }}</p>{% endif %}
 {{ ch.content_html | safe }}
 </section>
 {%- endmacro -%}
@@ -77,6 +83,12 @@
     font-family: system-ui, sans-serif; font-size: 0.8em; font-weight: 600;
     text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted);
     margin-bottom: 0.3em;
+  }
+  .source-filename {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.85em;
+    color: var(--muted);
+    margin: -0.1em 0 1em;
   }
   .toc { border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); padding: 1.5em 0; margin: 0 0 3em; }
   .toc h2 { margin-top: 0; margin-bottom: 0.8em; }
