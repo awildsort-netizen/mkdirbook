@@ -328,10 +328,12 @@ def _main_impl(args: argparse.Namespace) -> int:
             filepath = base / e.path
             content = filepath.read_text(encoding="utf-8")
             result = interactive_fix(e.path, content)
-            if result is not None:
-                filepath.write_text(result, encoding="utf-8")
+            if result.text is not None:
+                filepath.write_text(result.text, encoding="utf-8")
                 print(f"  Saved {e.path}", file=sys.stderr)
                 any_fixed = True
+            if result.quit_requested:
+                break
         if any_fixed:
             chapters = _build_chapter_list(base, manifest)
             print("  Chapter list rebuilt after fixes.", file=sys.stderr)

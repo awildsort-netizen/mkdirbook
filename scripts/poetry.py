@@ -91,6 +91,13 @@ class LineBreakFix:
     fixed: str
 
 
+@dataclass
+class InteractiveFixResult:
+    """Result of an interactive line-break fixing session."""
+    text: str | None
+    quit_requested: bool = False
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _effective_length(line: str) -> int:
@@ -503,15 +510,16 @@ def process_poetry_breaks(content: str, line_break: str = "  ",
 
 # ── Interactive fix mode ──────────────────────────────────────────────────────
 
-def interactive_fix(filepath: str, text: str) -> str | None:
+def interactive_fix(filepath: str, text: str) -> InteractiveFixResult:
     """Interactively prompt the user to fix line-break issues.
 
     Returns the corrected text, or None if no changes were made.
+    If quit_requested is True, the caller should stop interactive processing.
     Prints to stdout/stderr and reads from stdin.
     """
     fixes = generate_fixes(text)
     if not fixes:
-        return None
+        return InteractiveFixResult(text=None)
 
     print(f"\n{'='*60}", file=sys.stderr)
     print(f"  Interactive fix: {filepath}", file=sys.stderr)
@@ -524,22 +532,23 @@ def interactive_fix(filepath: str, text: str) -> str | None:
     for i, fix in enumerate(fixes, 1):
         kind_label = "ADD two trailing spaces" if fix.kind == "add_break" else "REMOVE trailing spaces"
         print(f"[{i}/{len(fixes)}] Line {fix.line_no}: {kind_label}", file=sys.stderr)
-        print(f"  Current:  {fix.original.rstrip()!r}", file=sys.stderr)
-        print(f"  Proposed: {fix.fixed.rstrip()!r}", file=sys.stderr)
+        print(f"  Current:  {fix.original!r}", file=sys.stderr)
+        print(f"  Proposed: {fix.fixed!r}", file=sys.stderr)
 
         choice = None
         while True:
             try:
-                choice = input("  Apply? [y]es / [n]o / [a]ll / [q]uit: ").strip().lower()
+                choice = input("  Apply? [y]es / [s]kip / [a]ll / [q]uit: ").strip().lower()
             except (EOFError, KeyboardInterrupt):
-                print("\n  Aborted.", file=sys.stderr)
+                print("\n  Quitting interactive mode.", file=sys.stderr)
                 abort = True
+                choice = "q"
                 break
 
             if choice in ("y", "yes"):
                 accepted.append(fix)
                 break
-            elif choice in ("n", "no"):
+            elif choice in ("s", "skip", "n", "no"):
                 break
             elif choice in ("a", "all"):
                 accepted.extend(fixes[i - 1:])
@@ -547,21 +556,26 @@ def interactive_fix(filepath: str, text: str) -> str | None:
                 break
             elif choice in ("q", "quit"):
                 print("  Quitting interactive mode.", file=sys.stderr)
-                if accepted:
-                    return fix_line_breaks(text, accepted)
-                return None
+                updated_text = fix_line_breaks(text, accepted) if accepted else None
+                return InteractiveFixResult(
+                    text=updated_text,
+                    quit_requested=True,
+                )
             else:
-                print("  Please enter y, n, a, or q.", file=sys.stderr)
+                print("  Please enter y, s, a, or q.", file=sys.stderr)
 
         if abort or choice in ("a", "all"):
             break
 
     if not accepted:
         print("  No changes applied.", file=sys.stderr)
-        return None
+        return InteractiveFixResult(text=None, quit_requested=abort)
 
     print(f"\n  Applied {len(accepted)} fix(es).\n", file=sys.stderr)
-    return fix_line_breaks(text, accepted)
+    return InteractiveFixResult(
+        text=fix_line_breaks(text, accepted),
+        quit_requested=abort,
+    )
 
 
 # ── CLI entry point (standalone testing) ──────────────────────────────────────
@@ -579,16 +593,23 @@ def _cli_main() -> None:
                    help="Show per-window scores")
     p.add_argument("-w", "--warnings", action="store_true",
                    help="Show line-break warnings")
-    p.add_argument("-I", "--interactive", action="store_true",
-                   help="Interactive fix mode")
+    p.add_argument("-i", "-I", "--interactive", action="store_true",
+                    help="Interactive fix mode")
     args = p.parse_args()
+
+    detailed_output = args.verbose or args.warnings or args.interactive
 
     for filepath in args.files:
         text = open(filepath, encoding="utf-8").read()
         is_poem = detect_poetry(text)
-        label = "POETRY" if is_poem else "PROSE"
         scores = poetry_scores(text)
 
+        if not detailed_output:
+            if is_poem:
+                print(filepath)
+            continue
+
+        label = "POETRY" if is_poem else "PROSE"
         print(f"\n{filepath}: {label}")
         if scores:
             avg = statistics.mean(s.score for s in scores)
@@ -610,10 +631,12 @@ def _cli_main() -> None:
 
         if args.interactive:
             result = interactive_fix(filepath, text)
-            if result is not None:
+            if result.text is not None:
                 with open(filepath, "w", encoding="utf-8") as f:
-                    f.write(result)
+                    f.write(result.text)
                 print(f"  Saved {filepath}")
+            if result.quit_requested:
+                break
 
 
 if __name__ == "__main__":

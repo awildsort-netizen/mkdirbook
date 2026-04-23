@@ -1,4 +1,4 @@
-### The Anyway Glimmer ###
+### The Anyway Glimmer
 
 windows to our souls on the ceiling. projections on the projections. cascading.
 sometimes blowing up to grander scale. sometimes shrinking.

@@ -76,7 +76,7 @@ def entry_rule_text(entry: Entry) -> str:
     return (
         f"{entry.approx_line}: {entry.left_context}"
         f"{{{entry.glitch}}}{entry.right_context}"
-    ).rstrip()
+    )
 
 
 def resolve_document_reference(base_dir: Path, raw_path: str) -> Path | None:
@@ -124,9 +124,9 @@ def parse_entries(text: str, base_dir: Path) -> List[Entry]:
                 source_line=source_line,
                 document_path=active_document,
                 approx_line=int(approx),
-                left_context=left.strip(),
-                glitch=glitch.strip(),
-                right_context=right.strip(),
+                left_context=left,
+                glitch=glitch,
+                right_context=right,
             )
         )
     return entries
@@ -208,6 +208,17 @@ def token_overlap_score(a_tokens: Sequence[str], b_tokens: Sequence[str]) -> flo
 def glitch_component(
     entry: Entry, candidate_index: int, lines: Sequence[str], context_radius: int
 ) -> float:
+    candidate_text = lines[candidate_index]
+    if entry.right_context == "":
+        if entry.glitch == "":
+            return 1.0 if candidate_text == entry.left_context else 0.0
+        if entry.glitch.strip() == "":
+            return (
+                1.0
+                if candidate_text == f"{entry.left_context}{entry.glitch}"
+                else 0.0
+            )
+
     glitch_text = normalize(entry.glitch)
     glitch_tokens = tokenize(entry.glitch)
     if not glitch_text:
@@ -501,12 +512,23 @@ def derive_whitelist_rule(
         return f"{approx_line}: {{{head_line}}}"
 
     matcher = SequenceMatcher(None, head_line, current_line)
+    opcodes = matcher.get_opcodes()
     spans = [
         (i1, i2)
-        for tag, i1, i2, _j1, _j2 in matcher.get_opcodes()
+        for tag, i1, i2, _j1, _j2 in opcodes
         if tag in {"replace", "delete"} and i1 != i2
     ]
     if not spans:
+        if (
+            len(opcodes) == 2
+            and opcodes[0][0] == "equal"
+            and opcodes[0][1] == 0
+            and opcodes[0][2] == len(head_line)
+            and opcodes[1][0] == "insert"
+            and opcodes[1][1] == len(head_line)
+            and current_line[opcodes[1][3] : opcodes[1][4]].strip() == ""
+        ):
+            return f"{approx_line}: {head_line}{{}}"
         return f"{approx_line}: {{{head_line}}}"
 
     start = spans[0][0]
@@ -514,7 +536,7 @@ def derive_whitelist_rule(
     left = head_line[:start]
     glitch = head_line[start:end]
     right = head_line[end:]
-    return f"{approx_line}: {left}{{{glitch}}}{right}".rstrip()
+    return f"{approx_line}: {left}{{{glitch}}}{right}"
 
 
 def append_whitelist_entry(
@@ -532,9 +554,9 @@ def append_whitelist_entry(
             source_line=0,
             document_path=document_path,
             approx_line=int(approx),
-            left_context=left.strip(),
-            glitch=glitch.strip(),
-            right_context=right.strip(),
+            left_context=left,
+            glitch=glitch,
+            right_context=right,
         )
     )
 
