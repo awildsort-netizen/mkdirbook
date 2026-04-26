@@ -14,9 +14,9 @@ your self-conscious, anxiety-red pen grading your inherent worth encoded
 ASCII.
 
 See? That was a lot of dotted blue lines in real time with me ripping on 
-what I saw instead of getting too concerned about the process.  
+what I saw instead of getting too concerned about the process
 
-Isn’t it about time you had fun?  
+Isn’t it about time you had fun?
 
 PS: Cray??la is now shipping _anxiety-red_ in their _Inside O?t_ collector's
 box.

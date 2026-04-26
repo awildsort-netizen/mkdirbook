@@ -3,7 +3,7 @@
 This story contains violence and descriptions of psychiatric distress. 
 I ask that you read it in good health and in deeply felt safety. 
 Let me tell you about the day I heard a voice tell me to leave my 
-house with my “GO Bag” and strip naked and dance.  
+house with my “GO Bag” and strip naked and dance.
 
 (TO BE EXPANDED) 
 

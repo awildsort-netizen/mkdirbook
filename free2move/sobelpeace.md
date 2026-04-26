@@ -1,6 +1,6 @@
-### Sobel Peace Prose  
+### Sobel Peace Prose
 
-Hey, look at how smart I am:  
+Hey, look at how smart I am:
 
 I have updated Einstein’s field equations, I have unified quantum gravity with 
 relativity. I have created theories about dark matter and black holes and a 
@@ -18,12 +18,12 @@ vegetable).
 
 What started out as a conversation about computer vision ended up being a 
 more general conversation about what is detection, what happens when we 
-put ourselves at the boundaries?  
+put ourselves at the boundaries?
 
 We could trust our technology if we wanted to. In fact, we already do. We just 
 don’t always say it in the best terms. We worry about what it’s doing to our 
 minds. We think our kids are too sensitive. We worry about the future because 
-of how highly competitive it’s becoming.  
+of how highly competitive it’s becoming.
 
 Put another way: we are not limited—we are learning how to stop treating the 
 world like a zero-sum game. The technology we feared would sound like 

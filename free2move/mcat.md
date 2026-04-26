@@ -4,7 +4,7 @@ Maybe if I had mentioned I had been lead of a team at Portland Street
 Medicine, that I had done real-world work helping folks survive 
 homelessness. I could have mentioned how it was notably rare to convince 
 any of our patients to go to a hospital to treat serious medical conditions we 
-encountered because the majority reported trauma in hospital environments.  
+encountered because the majority reported trauma in hospital environments.
 I could have given them a few more seconds to talk over me before I began 
 talking. I did see them jump every time I spoke immediately after they finished 
 a sentence. I adjusted accordingly, but it might have been too late. 

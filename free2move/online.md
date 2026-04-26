@@ -23,7 +23,7 @@ The day before, I had lost my passport dancing the streets of Portland with the
 Long Ago, and my mood had been painted in broad brushstrokes of grump 
 since. Why can't I take care of myself? How could I be so reckless to jump and 
 down in pure joy with the dead, in reunion with a lifestream that ran so deep it 
-left me drunk and carefree?  
+left me drunk and carefree?
 
 Hotels require identity for me to stay; my money is no good without its 
 accompanying documentation. The trials we put our immigrant kin through 
