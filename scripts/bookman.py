@@ -2,8 +2,8 @@
 """
 bookman.py -- Book Manifest Manager
 
-A Textual TUI for ordering book chapters and exporting via pandoc.
-Manages a .bookmanifest JSON dotfile for ordering, roles, and metadata.
+A Textual TUI for ordering book chapters and exporting them.
+Manages JSON manifests for ordering, roles, and metadata.
 
 Usage:
     python bookman.py [directory]   # defaults to current directory
@@ -49,8 +49,6 @@ ROLES: dict[str, tuple[str, str, str]] = {
     "template":     ("TM", "#80cbc4", "Template"),
     "poetry":       ("PO", "#f48fb1", "Poetry"),
 }
-
-MANIFEST_FILE = ".bookmanifest"  # legacy; kept for migration only
 
 
 def _title_to_slug(title: str) -> str:
@@ -102,24 +100,6 @@ def find_manifest_paths(base: Path) -> list[Path]:
         if _looks_like_manifest(jf):
             manifests.append(jf)
     return manifests
-
-
-def _migrate_dotfile(base: Path) -> None:
-    """If .bookmanifest exists and no manifests exist yet, migrate it."""
-    old = base / MANIFEST_FILE
-    if not old.exists():
-        return
-    if find_manifest_paths(base):
-        return  # already migrated
-    try:
-        data = json.loads(old.read_text(encoding="utf-8"))
-        title = data.get("title", base.name.replace("-", " ").replace("_", " ").title())
-        dest = manifest_path_for(base, title)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-        old.unlink()
-    except Exception as exc:
-        pass  # migration best-effort; original file stays
 
 
 MANIFEST_VERSION = 1
@@ -571,7 +551,7 @@ class FileExplorerScreen(ModalScreen):
         self.dismiss(None)
 
 class ExportScreen(ModalScreen):
-    """Export the book in selected formats via pandoc."""
+    """Export the book in selected formats."""
 
     BINDINGS = [Binding("escape", "dismiss(None)", "Close")]
 
@@ -721,7 +701,7 @@ class HelpScreen(ModalScreen):
 | A | Re-include excluded file, or add untracked file from disk |
 | D | Exclude selected file from export |
 | X | Remove selected file from manifest entirely |
-| S | Save manifest (.bookmanifest) |
+| S | Save manifest |
 | E | Open export dialog |
 | ? | Show this help |
 | Q | Quit (prompts if unsaved changes) |
@@ -2146,7 +2126,6 @@ class WorksLauncherApp(App):
         )
 
     def on_mount(self) -> None:
-        _migrate_dotfile(self.base)
         self._works = scan_works(self.base)
         self.query_one("#launcher-title", Static).update(
             f"★  Book Works — {self.base.name}  ★"
@@ -2298,7 +2277,6 @@ if __name__ == "__main__":
         # Direct manifest path given
         manifest_file = given
         base_dir = base_for_manifest_path(given)
-        _migrate_dotfile(base_dir)
         if args.export:
             pass  # handled below
         else:
@@ -2309,8 +2287,6 @@ if __name__ == "__main__":
     else:
         print(f"error: not a directory or manifest file: {given}", file=sys.stderr)
         sys.exit(1)
-
-    _migrate_dotfile(base_dir)
 
     # --manifest flag overrides launcher
     if getattr(args, "manifest", None):
@@ -2330,7 +2306,6 @@ if __name__ == "__main__":
         sys.exit(0)
 
     if args.export:
-        _migrate_dotfile(base_dir)
         works = scan_works(base_dir)
         if not works:
             print("error  no manifests found in the project", file=sys.stderr)

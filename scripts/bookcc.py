@@ -3,6 +3,7 @@ from __future__ import annotations
 """bookcc — book compiler
 
 gcc-style CLI for rendering book manifests to PDF, HTML, DOCX, Markdown, or TiddlyWiki.
+The default manifest-driven run emits PDF, HTML, Markdown, and DOCX; TiddlyWiki is opt-in.
 
 Usage:
   bookcc [OPTIONS] [MANIFEST] [FILE ...]
@@ -29,7 +30,7 @@ Examples:
   bookcc free2move/free2move.json -o out/free2move.pdf,html,md
   bookcc ch1.md ch2.md ch3.md -o draft.pdf -t "My Draft"
   bookcc free2move/free2move.json -f pdf,html
-  bookcc free2move/free2move.json            # all formats to manifest output_dir
+  bookcc free2move/free2move.json            # default formats to manifest output_dir
 """
 
 import argparse
@@ -152,10 +153,9 @@ def _resolve_outputs(args: argparse.Namespace, manifest: Manifest
                 _die(f"Unknown format '{fmt}' in -f {fspec}")
             result.append((fmt, None))
 
-    # No explicit outputs: use all formats implied by manifest (default: all four)
+    # No explicit outputs: default to PDF, HTML, Markdown, and DOCX.
+    # TiddlyWiki is opt-in via -f tw or an explicit .tw.html output path.
     if not result:
-        outname = manifest.output_name or _title_to_slug(manifest.title)
-        outdir  = Path(args.outdir or manifest.output_dir or f"out/{_title_to_slug(manifest.title)}")
         for fmt in ("pdf", "html", "md", "docx"):
             result.append((fmt, None))
         # tw is opt-in only; not included in the default all-formats run
