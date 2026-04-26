@@ -17,6 +17,7 @@ import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Sequence
 
 from textual import events, on
 from textual.app import App, ComposeResult
@@ -73,6 +74,16 @@ def manifest_path_for(base: Path, title: str) -> Path:
     return base / slug / f"{slug}.json"
 
 
+def base_for_manifest_path(manifest_path: Path) -> Path:
+    """Return the project base implied by a top-level work manifest path."""
+    return manifest_path.parent.parent
+
+
+def resolve_manifest_entry_path(base: Path, entry: "FileEntry") -> Path:
+    """Return the filesystem path for one manifest file entry."""
+    return base / entry.path
+
+
 def _looks_like_manifest(path: Path) -> bool:
     """Return True when a JSON file matches the expected manifest shape."""
     try:
@@ -127,7 +138,7 @@ class FileEntry:
     show_filename: bool = False
 
     def exists_at(self, base: Path) -> bool:
-        return (base / self.path).exists()
+        return resolve_manifest_entry_path(base, self).exists()
 
 
 @dataclass
@@ -1468,10 +1479,12 @@ _BUILTIN_TW_TEMPLATE = """\
 # ---- Poetry Detection (delegated to poetry.py) -----------------------------
 
 from poetry import (
-    detect_poetry as _detect_poetry,
-    process_poetry_breaks as _process_poetry_breaks,
+    LineBreakRegressionModel,
     analyse_line_breaks as _analyse_line_breaks,
-    poetry_scores as _poetry_scores,
+    detect_poetry as _detect_poetry,
+    load_trailing_regression_model as _load_trailing_regression_model,
+    process_poetry_breaks as _process_poetry_breaks,
+    trailing_score_path as _trailing_score_path,
 )
 
 
@@ -1520,47 +1533,165 @@ def _render_markdown(text: str) -> str:
         return "\n".join(f"<p>{p.strip()}</p>" for p in paras if p.strip())
 
 
-def _build_chapter_list(base: Path, manifest: "Manifest") -> list[dict]:
-    """Return chapter dicts with rendered content for use in templates."""
-    enabled = [
-        e for e in manifest.files
-        if e.enabled and e.role not in ("excluded", "template") and e.exists_at(base)
+@dataclass
+class Diagnostic:
+    level: str
+    path: str
+    line_no: int | None
+    message: str
+
+
+@dataclass
+class Chapter:
+    title: str
+    filename: str
+    source_filename: str
+    role: str
+    num: int | None
+    anchor_id: str
+    toc_prefix: str
+    show_filename: bool
+    content: str
+    content_md: str
+    content_html_raw: str
+    content_html: str
+    is_poetry: bool
+
+    def to_template_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass
+class ChapterTextAnalysis:
+    display_title: str
+    content_md: str
+    content_html_raw: str
+    content_html: str
+    is_poetry: bool
+    diagnostics: list[Diagnostic]
+
+
+@dataclass
+class BuildResult:
+    chapters: list[Chapter]
+    diagnostics: list[Diagnostic]
+
+    def template_chapters(self) -> list[dict]:
+        return [chapter.to_template_dict() for chapter in self.chapters]
+
+
+def load_build_poetry_model(base: Path) -> LineBreakRegressionModel | None:
+    """Load the directory-level trailing-space model for book builds."""
+    return _load_trailing_regression_model(_trailing_score_path(base))
+
+
+def iter_exportable_entries(manifest: "Manifest", base: Path) -> list[FileEntry]:
+    """Return enabled manifest entries that can be exported."""
+    return [
+        entry for entry in manifest.files
+        if entry.enabled
+        and entry.role not in ("excluded", "template")
+        and entry.exists_at(base)
     ]
+
+
+def read_chapter_source(base: Path, entry: FileEntry) -> str:
+    """Read one chapter source file for rendering."""
+    return resolve_manifest_entry_path(base, entry).read_text(encoding="utf-8").strip()
+
+
+def analyse_chapter_text(
+    content: str,
+    entry: FileEntry,
+    model: LineBreakRegressionModel | None = None,
+) -> ChapterTextAnalysis:
+    """Analyse and transform one source text for rendering."""
+    first_line = content.splitlines()[0].lstrip("# ").strip() if content else Path(entry.path).stem
+    display_title = _display_title(first_line) or Path(entry.path).stem
+    force_poetry = entry.role == "poetry"
+    detected_poetry = _detect_poetry(content, force=force_poetry)
+    content_md = _process_poetry_breaks(content, "  ", force=force_poetry, model=model)
+    content_html_raw = _process_poetry_breaks(content, "  <br>", force=force_poetry, model=model)
+    is_poetry = detected_poetry or content_md != content
+    diagnostics = [
+        Diagnostic(
+            level="warning",
+            path=entry.path,
+            line_no=warning.line_no,
+            message=warning.message,
+        )
+        for warning in _analyse_line_breaks(content, model)
+    ]
+    return ChapterTextAnalysis(
+        display_title=display_title,
+        content_md=content_md,
+        content_html_raw=content_html_raw,
+        content_html=_render_markdown(content_html_raw),
+        is_poetry=is_poetry,
+        diagnostics=diagnostics,
+    )
+
+
+def chapter_from_entry(
+    base: Path,
+    manifest: "Manifest",
+    entry: FileEntry,
+    chapter_index: int,
+    chapter_num: int | None,
+    model: LineBreakRegressionModel | None = None,
+) -> tuple[Chapter, list[Diagnostic]]:
+    """Build the renderable chapter object for one manifest entry."""
+    content = read_chapter_source(base, entry)
+    analysis = analyse_chapter_text(content, entry, model)
+    chapter = Chapter(
+        title=analysis.display_title,
+        filename=entry.path,
+        source_filename=entry.path,
+        role=entry.role,
+        num=chapter_num,
+        anchor_id=f"{_title_to_slug(Path(entry.path).stem)}-{chapter_index}",
+        toc_prefix=f"Chapter {chapter_num}" if chapter_num is not None else ROLES.get(entry.role, ("", "", entry.role.title()))[2],
+        show_filename=manifest.show_filenames or entry.show_filename,
+        content=content,
+        content_md=analysis.content_md,
+        content_html_raw=analysis.content_html_raw,
+        content_html=analysis.content_html,
+        is_poetry=analysis.is_poetry,
+    )
+    return chapter, analysis.diagnostics
+
+
+def build_chapters(
+    base: Path,
+    manifest: "Manifest",
+    model: LineBreakRegressionModel | None = None,
+) -> BuildResult:
+    """Build renderable chapters and diagnostics for a manifest."""
     chapter_num = 0
-    chapters = []
-    for e in enabled:
-        if e.role == "chapter":
+    chapters: list[Chapter] = []
+    diagnostics: list[Diagnostic] = []
+    for entry in iter_exportable_entries(manifest, base):
+        if entry.role == "chapter":
             chapter_num += 1
             num: int | None = chapter_num
         else:
             num = None
-        content = (base / e.path).read_text(encoding="utf-8").strip()
-        first_line = content.splitlines()[0].lstrip("# ").strip() if content else Path(e.path).stem
-        display_title = _display_title(first_line) or Path(e.path).stem
-        force_poetry = e.role == "poetry"
-        is_poetry = _detect_poetry(content, force=force_poetry)
-        content_md = _process_poetry_breaks(content, "  ", force=is_poetry)
-        content_html_raw = _process_poetry_breaks(content, "  <br>", force=is_poetry)
-        # Emit line-break warnings from the statistical detector
-        lb_warnings = _analyse_line_breaks(content)
-        for w in lb_warnings:
-            print(f"warning  {e.path}: {w.message}", file=sys.stderr)
-        chapters.append({
-            "title": display_title,
-            "filename": e.path,
-            "source_filename": e.path,
-            "role": e.role,
-            "num": num,
-            "anchor_id": f"{_title_to_slug(Path(e.path).stem)}-{len(chapters) + 1}",
-            "toc_prefix": f"Chapter {num}" if num is not None else ROLES.get(e.role, ("", "", e.role.title()))[2],
-            "show_filename": manifest.show_filenames or e.show_filename,
-            "content": content,
-            "content_md": content_md,
-            "content_html_raw": content_html_raw,
-            "content_html": _render_markdown(content_html_raw),
-            "is_poetry": is_poetry,
-        })
-    return chapters
+        chapter, entry_diagnostics = chapter_from_entry(
+            base=base,
+            manifest=manifest,
+            entry=entry,
+            chapter_index=len(chapters) + 1,
+            chapter_num=num,
+            model=model,
+        )
+        chapters.append(chapter)
+        diagnostics.extend(entry_diagnostics)
+    return BuildResult(chapters=chapters, diagnostics=diagnostics)
+
+
+def _build_chapter_list(base: Path, manifest: "Manifest") -> list[dict]:
+    """Return chapter dicts with rendered content for use in templates."""
+    return build_chapters(base, manifest).template_chapters()
 
 
 def render_book(base: Path, manifest: "Manifest", fmt: str,
@@ -1568,7 +1699,7 @@ def render_book(base: Path, manifest: "Manifest", fmt: str,
     """Render the book using Jinja2, returning the rendered string.
 
     Pass *_chapters* to reuse an already-built chapter list and avoid
-    running _build_chapter_list (and its warnings) a second time.
+    rebuilding chapter content a second time.
     """
     from jinja2 import Environment, BaseLoader
     from datetime import datetime
@@ -1649,7 +1780,7 @@ def render_book_tw(base: Path, manifest: "Manifest",
     that the full TiddlyWiki UI (search, navigation, themes) is available.
 
     Pass *_chapters* to reuse an already-built chapter list and avoid
-    running _build_chapter_list (and its warnings) a second time.
+    rebuilding chapter content a second time.
     """
     import json as _json
     from jinja2 import Environment, BaseLoader
@@ -1755,7 +1886,7 @@ def export_book_cli(base: Path, manifest: Manifest, fmts: set[str]) -> None:
     out.mkdir(parents=True, exist_ok=True)
     print(f"output  {out_rel}")
 
-    enabled = [e for e in manifest.files if e.enabled and e.role != "excluded"]
+    enabled = [e for e in manifest.files if e.enabled and e.role not in ("excluded", "template")]
     skipped = [e.path for e in enabled if not e.exists_at(base)]
     exportable = [e for e in enabled if e.exists_at(base)]
 
@@ -1766,53 +1897,171 @@ def export_book_cli(base: Path, manifest: Manifest, fmts: set[str]) -> None:
         print("error  No exportable files found.", file=sys.stderr)
         sys.exit(1)
 
-    output_name = manifest.output_name or _title_to_slug(manifest.title)
+    poetry_model = load_build_poetry_model(base)
+    build_result = build_chapters(base, manifest, model=poetry_model)
+    chapters = build_result.template_chapters()
+    for diagnostic in build_result.diagnostics:
+        location = diagnostic.path
+        if diagnostic.line_no is not None:
+            location = f"{location}:{diagnostic.line_no}"
+        print(f"{diagnostic.level}  {location}: {diagnostic.message}", file=sys.stderr)
 
-    # Render md via Jinja2 template
-    chapters = _build_chapter_list(base, manifest)
-    rendered_md = render_book(base, manifest, "md", _chapters=chapters)
     combined_path = out / "combined.md"
-    combined_path.write_text(rendered_md, encoding="utf-8")
+    targets = [ExportTarget(fmt=fmt) for fmt in ("md", "html", "tw", "pdf", "docx") if fmt in fmts]
+    results = export_manifest(
+        base=base,
+        manifest=manifest,
+        targets=targets,
+        chapters=chapters,
+        combined_markdown_path=combined_path,
+        pandoc_timeout=120,
+    )
     print(f"ok  Rendered {len(chapters)} chapters -> combined.md")
 
-    if "md" in fmts:
-        dest = out / f"{output_name}.md"
-        shutil.copy(combined_path, dest)
-        print(f"ok  Markdown -> {dest.name}")
-
-    if "html" in fmts:
-        rendered_html = render_book(base, manifest, "html", _chapters=chapters)
-        dest = out / f"{output_name}.html"
-        dest.write_text(rendered_html, encoding="utf-8")
-        print(f"ok  HTML -> {dest.name}")
-
-    if "tw" in fmts:
-        try:
-            rendered_tw = render_book_tw(base, manifest, _chapters=chapters)
-            dest = out / f"{output_name}.tw.html"
-            dest.write_text(rendered_tw, encoding="utf-8")
-            print(f"ok  TiddlyWiki -> {dest.name}")
-        except FileNotFoundError as exc:
-            print(f"error  TiddlyWiki: {exc}", file=sys.stderr)
-
-    if not fmts & {"pdf", "docx"}:
-        return
-
-    if not shutil.which("pandoc"):
-        print("error  pandoc not found. Install: https://pandoc.org/installing.html", file=sys.stderr)
-        sys.exit(1)
-
-    for fmt in ("pdf", "docx"):
-        if fmt not in fmts:
+    for result in results:
+        if result.ok:
+            assert result.path is not None
+            label = {
+                "md": "Markdown",
+                "html": "HTML",
+                "tw": "TiddlyWiki",
+                "pdf": "PDF",
+                "docx": "DOCX",
+            }.get(result.fmt, result.fmt.upper())
+            print(f"ok  {label} -> {result.path.name}")
             continue
-        dest = out / f"{output_name}.{fmt}"
-        cmd = ["pandoc", str(combined_path), "-o", str(dest)]
-        import subprocess
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-        if r.returncode == 0:
-            print(f"ok  {fmt.upper()} -> {dest.name}")
-        else:
-            print(f"error  {fmt.upper()}: {r.stderr.strip()[:200]}", file=sys.stderr)
+
+        label = {
+            "tw": "TiddlyWiki",
+            "pdf": "PDF",
+            "docx": "DOCX",
+        }.get(result.fmt, result.fmt.upper())
+        print(f"error  {label}: {result.message}", file=sys.stderr)
+        if result.fmt in ("pdf", "docx") and result.message.startswith("pandoc not found"):
+            sys.exit(1)
+
+
+@dataclass
+class ExportTarget:
+    fmt: str
+    dest: Path | None = None
+
+
+@dataclass
+class ExportResult:
+    fmt: str
+    path: Path | None
+    ok: bool
+    message: str = ""
+    command: list[str] = field(default_factory=list)
+
+
+def export_destination_for(
+    fmt: str,
+    dest: Path | None,
+    manifest: "Manifest",
+    base: Path,
+    outdir_override: str | None = None,
+) -> Path:
+    """Resolve final output path for one export target."""
+    if dest is not None:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        return dest
+    outname = manifest.output_name or _title_to_slug(manifest.title)
+    out_rel = outdir_override or manifest.output_dir or f"out/{_title_to_slug(manifest.title)}"
+    out = base / out_rel
+    out.mkdir(parents=True, exist_ok=True)
+    if fmt == "tw":
+        return out / f"{outname}.tw.html"
+    return out / f"{outname}.{fmt}"
+
+
+def export_manifest(
+    base: Path,
+    manifest: "Manifest",
+    targets: Sequence[ExportTarget],
+    chapters: list[dict] | None = None,
+    outdir_override: str | None = None,
+    pandoc_timeout: int = 180,
+    combined_markdown_path: Path | None = None,
+) -> list[ExportResult]:
+    """Export a manifest to requested targets using shared render/write logic."""
+    resolved_chapters = chapters if chapters is not None else _build_chapter_list(base, manifest)
+    results: list[ExportResult] = []
+    rendered_md: str | None = None
+    fmts_needed = {target.fmt for target in targets}
+    if fmts_needed & {"pdf", "docx", "md"} or combined_markdown_path is not None:
+        rendered_md = render_book(base, manifest, "md", _chapters=resolved_chapters)
+    if combined_markdown_path is not None:
+        assert rendered_md is not None
+        combined_markdown_path.parent.mkdir(parents=True, exist_ok=True)
+        combined_markdown_path.write_text(rendered_md, encoding="utf-8")
+
+    for target in targets:
+        fmt = target.fmt
+        dest = export_destination_for(fmt, target.dest, manifest, base, outdir_override)
+        if fmt == "md":
+            assert rendered_md is not None
+            dest.write_text(rendered_md, encoding="utf-8")
+            results.append(ExportResult(fmt=fmt, path=dest, ok=True))
+            continue
+
+        if fmt == "html":
+            rendered_html = render_book(base, manifest, "html", _chapters=resolved_chapters)
+            dest.write_text(rendered_html, encoding="utf-8")
+            results.append(ExportResult(fmt=fmt, path=dest, ok=True))
+            continue
+
+        if fmt == "tw":
+            try:
+                rendered_tw = render_book_tw(base, manifest, _chapters=resolved_chapters)
+                dest.write_text(rendered_tw, encoding="utf-8")
+                results.append(ExportResult(fmt=fmt, path=dest, ok=True))
+            except FileNotFoundError as exc:
+                results.append(ExportResult(fmt=fmt, path=dest, ok=False, message=str(exc)))
+            continue
+
+        if fmt in ("pdf", "docx"):
+            assert rendered_md is not None
+            if not shutil.which("pandoc"):
+                results.append(ExportResult(
+                    fmt=fmt,
+                    path=dest,
+                    ok=False,
+                    message="pandoc not found. Install: https://pandoc.org/installing.html",
+                ))
+                continue
+            combined_path = dest.parent / "_bookcc_combined.md"
+            combined_path.write_text(rendered_md, encoding="utf-8")
+            cmd = ["pandoc", str(combined_path), "-o", str(dest)]
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=pandoc_timeout)
+                if result.returncode == 0:
+                    results.append(ExportResult(fmt=fmt, path=dest, ok=True, command=cmd))
+                else:
+                    results.append(ExportResult(
+                        fmt=fmt,
+                        path=dest,
+                        ok=False,
+                        message=result.stderr.strip()[:200],
+                        command=cmd,
+                    ))
+            except subprocess.TimeoutExpired:
+                results.append(ExportResult(
+                    fmt=fmt,
+                    path=dest,
+                    ok=False,
+                    message=f"pandoc timed out (>{pandoc_timeout}s)",
+                    command=cmd,
+                ))
+            finally:
+                if combined_path.exists():
+                    combined_path.unlink()
+            continue
+
+        results.append(ExportResult(fmt=fmt, path=dest, ok=False, message=f"unknown format: {fmt}"))
+
+    return results
 
 
 # ---- Works Launcher -----------------------------------------------------------
@@ -2048,7 +2297,7 @@ if __name__ == "__main__":
     if given.is_file() and given.suffix == ".json":
         # Direct manifest path given
         manifest_file = given
-        base_dir = given.parent.parent
+        base_dir = base_for_manifest_path(given)
         _migrate_dotfile(base_dir)
         if args.export:
             pass  # handled below
@@ -2069,7 +2318,7 @@ if __name__ == "__main__":
         if not mf.exists():
             print(f"error: manifest not found: {mf}", file=sys.stderr)
             sys.exit(1)
-        manifest_base = mf.parent.parent
+        manifest_base = base_for_manifest_path(mf)
         if not args.export:
             BookManApp(manifest_base, mf).run()
             sys.exit(0)

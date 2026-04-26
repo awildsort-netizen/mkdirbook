@@ -1,6 +1,6 @@
 ### Demon Dancing
 
-“I was mad at you, Mom, but then it hit me: this is a difficult change for you
+“I was mad at you, Mom, but then it hit me: this is a difficult change for you  
 to make.”
 
 Mom’s tone softened and became reflective. “Yeah, it is.”
@@ -12,23 +12,23 @@ distinguished nurse with a long career serving communities in a rural part of
 Oklahoma, a mother of two very handsome and intelligent kids, and a survivor of
 cancer and code blue times two.
 
-Mom’s tougher than she acknowledges—a wise eye would trace the line back to her
-communication. Mom has no problem communicating vulnerability and problem
-solves by adjusting her behavior. However, adjusting your behavior alone can
+Mom’s tougher than she acknowledges—a wise eye would trace the line back to her 
+communication. Mom has no problem communicating vulnerability and problem 
+solves by adjusting her behavior. However, adjusting your behavior alone can 
 only go so deep: when it comes to how my mom sees herself, a small dam can’t
 hold the river of her need for approval.
 
-I’m not calling her out here. Truly. Many of us vibe with this need. I have it
-too. I got mad at Mom in part because I inherited this from her and have worked
-hard to free myself of its grip. The kind that brings on that spike of panic,
-where everything in me wants to collapse the moment into something predictable.
+I’m not calling her out here. Truly. Many of us vibe with this need. I have it 
+too. I got mad at Mom in part because I inherited this from her and have worked 
+hard to free myself of its grip. The kind that brings on that spike of panic, 
+where everything in me wants to collapse the moment into something predictable. 
 Something resolved. Something placated.
 
-But Mom doesn’t have what I have. Therapy, exposure to cultures and beliefs and
-places, the no-kids freedom bonus. None of that would have been possible
+But Mom doesn’t have what I have. Therapy, exposure to cultures and beliefs and 
+places, the no-kids freedom bonus. None of that would have been possible 
 without her creating me and investing her whole heart into me.
 
-I also take a lot of risks and have come to find myself vibing to the frenetic
+I also take a lot of risks and have come to find myself vibing to the frenetic 
 experimental jazz of self improvement.
 
 My mom isn’t me, and I don’t need her to be. I know my mom’s demons well,

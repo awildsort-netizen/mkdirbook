@@ -34,8 +34,6 @@ Examples:
 
 import argparse
 import contextlib
-import shutil
-import subprocess
 import sys
 from pathlib import Path
 
@@ -43,20 +41,19 @@ from pathlib import Path
 _here = Path(__file__).parent
 sys.path.insert(0, str(_here))
 from bookman import (  # noqa: E402
+    ExportTarget,
     FileEntry,
-    Manifest,
-    _build_chapter_list,
-    _title_to_slug,
+    base_for_manifest_path,
+    build_chapters,
+    export_destination_for,
+    export_manifest,
+    load_build_poetry_model,
     load_manifest,
-    render_book,
-    render_book_tw,
+    _title_to_slug,
+    resolve_manifest_entry_path,
     scan_works,
 )
-from poetry import (  # noqa: E402
-    analyse_line_breaks,
-    generate_fixes,
-    interactive_fix,
-)
+from poetry import interactive_fix  # noqa: E402
 
 __version__ = "1.0.0"
 
@@ -169,17 +166,7 @@ def _resolve_outputs(args: argparse.Namespace, manifest: Manifest
 def _dest_for(fmt: str, dest: Path | None, manifest: Manifest,
               base: Path, outdir_override: str | None) -> Path:
     """Resolve final output Path."""
-    if dest is not None:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        return dest
-    outname = manifest.output_name or _title_to_slug(manifest.title)
-    out_rel = outdir_override or manifest.output_dir or f"out/{_title_to_slug(manifest.title)}"
-    out = base / out_rel
-    out.mkdir(parents=True, exist_ok=True)
-    # TiddlyWiki output uses .tw.html extension to distinguish from regular HTML
-    if fmt == "tw":
-        return out / f"{outname}.tw.html"
-    return out / f"{outname}.{fmt}"
+    return export_destination_for(fmt, dest, manifest, base, outdir_override)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -196,6 +183,17 @@ def _info(msg: str, verbose: bool = False, always: bool = False) -> None:
 
 def _warn(msg: str) -> None:
     print(f"bookcc: warning: {msg}", file=sys.stderr)
+
+
+def _emit_diagnostics(diagnostics) -> None:
+    for diagnostic in diagnostics:
+        prefix = f"{diagnostic.path}:"
+        if diagnostic.line_no is not None:
+            prefix = f"{diagnostic.path}:{diagnostic.line_no}:"
+        if diagnostic.level == "warning":
+            _warn(f"{prefix} {diagnostic.message}")
+        else:
+            print(f"bookcc: {diagnostic.level}: {prefix} {diagnostic.message}", file=sys.stderr)
 
 
 class _WarningTracker:
@@ -269,7 +267,7 @@ def _main_impl(args: argparse.Namespace) -> int:
         manifest_path = manifest_inputs[0].resolve()
         if not manifest_path.exists():
             _die(f"Manifest not found: {manifest_path}")
-        base = manifest_path.parent.parent
+        base = base_for_manifest_path(manifest_path)
         manifest, err = load_manifest(manifest_path, base)
         if err:
             _warn(f"Manifest loaded with warnings: {err}")
@@ -308,7 +306,10 @@ def _main_impl(args: argparse.Namespace) -> int:
         custom_templates[fmt_t] = tfile
     manifest.custom_templates = custom_templates
 
-    chapters = _build_chapter_list(base, manifest)
+    poetry_model = load_build_poetry_model(base)
+    build_result = build_chapters(base, manifest, model=poetry_model)
+    chapters = build_result.template_chapters()
+    _emit_diagnostics(build_result.diagnostics)
     skipped = [e.path for e in manifest.files
                if e.enabled and e.role not in ("excluded", "template")
                and not e.exists_at(base)]
@@ -325,9 +326,9 @@ def _main_impl(args: argparse.Namespace) -> int:
             if e.enabled and e.role not in ("excluded", "template") and e.exists_at(base)
         ]
         for e in enabled:
-            filepath = base / e.path
+            filepath = resolve_manifest_entry_path(base, e)
             content = filepath.read_text(encoding="utf-8")
-            result = interactive_fix(e.path, content)
+            result = interactive_fix(e.path, content, poetry_model)
             if result.text is not None:
                 filepath.write_text(result.text, encoding="utf-8")
                 print(f"  Saved {e.path}", file=sys.stderr)
@@ -335,7 +336,10 @@ def _main_impl(args: argparse.Namespace) -> int:
             if result.quit_requested:
                 break
         if any_fixed:
-            chapters = _build_chapter_list(base, manifest)
+            poetry_model = load_build_poetry_model(base)
+            build_result = build_chapters(base, manifest, model=poetry_model)
+            chapters = build_result.template_chapters()
+            _emit_diagnostics(build_result.diagnostics)
             print("  Chapter list rebuilt after fixes.", file=sys.stderr)
 
     outputs = _resolve_outputs(args, manifest)
@@ -354,60 +358,26 @@ def _main_impl(args: argparse.Namespace) -> int:
         if args.dry_run:
             return 0
 
-    rendered_md: str | None = None
-    combined_path: Path | None = None
-    fmts_needed = {fmt for fmt, _ in outputs}
-    if fmts_needed & {"pdf", "docx", "md"}:
-        rendered_md = render_book(base, manifest, "md", _chapters=chapters)
-
+    results = export_manifest(
+        base=base,
+        manifest=manifest,
+        targets=[ExportTarget(fmt=fmt, dest=dest) for fmt, dest in outputs],
+        chapters=chapters,
+        outdir_override=args.outdir,
+        pandoc_timeout=180,
+    )
     errors = 0
-    for fmt, dest_arg in outputs:
-        dest = _dest_for(fmt, dest_arg, manifest, base, args.outdir)
-
-        if fmt == "md":
-            assert rendered_md is not None
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_text(rendered_md, encoding="utf-8")
-            print(f"{dest}")
-
-        elif fmt == "html":
-            rendered_html = render_book(base, manifest, "html", _chapters=chapters)
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_text(rendered_html, encoding="utf-8")
-            print(f"{dest}")
-
-        elif fmt == "tw":
-            try:
-                rendered_tw = render_book_tw(base, manifest, _chapters=chapters)
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                dest.write_text(rendered_tw, encoding="utf-8")
-                print(f"{dest}")
-            except FileNotFoundError as exc:
-                print(f"bookcc: error: tw: {exc}", file=sys.stderr)
-                errors += 1
-
-        elif fmt in ("pdf", "docx"):
-            assert rendered_md is not None
-            if not shutil.which("pandoc"):
-                _die("pandoc not found. Install: https://pandoc.org/installing.html")
-            combined_path = dest.parent / "_bookcc_combined.md"
-            combined_path.write_text(rendered_md, encoding="utf-8")
-            cmd = ["pandoc", str(combined_path), "-o", str(dest)]
-            if args.verbose:
-                print(f"  run  {' '.join(cmd)}")
-            try:
-                r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
-                if r.returncode == 0:
-                    print(f"{dest}")
-                else:
-                    print(f"bookcc: error: {fmt}: {r.stderr.strip()[:200]}", file=sys.stderr)
-                    errors += 1
-            except subprocess.TimeoutExpired:
-                print(f"bookcc: error: {fmt}: pandoc timed out (>180s)", file=sys.stderr)
-                errors += 1
-            finally:
-                if combined_path and combined_path.exists():
-                    combined_path.unlink()
+    for result in results:
+        if result.ok:
+            if args.verbose and result.command:
+                print(f"  run  {' '.join(result.command)}")
+            assert result.path is not None
+            print(f"{result.path}")
+            continue
+        if result.fmt in ("pdf", "docx") and result.message.startswith("pandoc not found"):
+            _die(result.message)
+        print(f"bookcc: error: {result.fmt}: {result.message}", file=sys.stderr)
+        errors += 1
 
     return errors
 

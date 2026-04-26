@@ -14,6 +14,7 @@ Workflow:
 """
 
 import argparse
+import inspect
 import math
 import re
 import subprocess
@@ -21,7 +22,7 @@ import sys
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Iterable, List, Sequence
+from typing import Any, Callable, Iterable, List, Mapping, Sequence, TypeVar
 
 
 TOKEN_RE = re.compile(r"[A-Za-z0-9']+")
@@ -30,6 +31,7 @@ TEXT_SUFFIXES = {".md", ".txt"}
 ANSI_RED = "\033[31m"
 ANSI_GREEN = "\033[32m"
 ANSI_RESET = "\033[0m"
+T = TypeVar("T")
 
 
 @dataclass
@@ -62,6 +64,39 @@ class WhitelistHit:
 
 class ReviewAbort(Exception):
     pass
+
+
+def context_value(context: object, name: str) -> Any:
+    """Resolve one named value from a mapping or context object."""
+    if isinstance(context, Mapping):
+        return context[name]
+    return getattr(context, name)
+
+
+def call_with_context(
+    operator: Callable[..., T],
+    context: object,
+    /,
+    **overrides: Any,
+) -> T:
+    """Call an operator with missing parameters embedded from context by name."""
+    signature = inspect.signature(operator)
+    kwargs: dict[str, Any] = {}
+    for name, parameter in signature.parameters.items():
+        if parameter.kind not in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        ):
+            continue
+        if name in overrides:
+            kwargs[name] = overrides[name]
+            continue
+        try:
+            kwargs[name] = context_value(context, name)
+        except (AttributeError, KeyError):
+            if parameter.default is inspect.Parameter.empty:
+                raise TypeError(f"Missing required context value: {name}") from None
+    return operator(**kwargs)
 
 
 def tokenize(text: str) -> List[str]:
@@ -391,30 +426,19 @@ def prompt_choice(prompt: str, valid: set[str]) -> str:
 def build_whitelist_hits(
     entries: Sequence[Entry],
     base_dir: Path,
-    alpha: float,
-    weight_line: float,
-    weight_context: float,
-    weight_glitch: float,
-    tau: float,
-    search_radius: int,
-    context_radius: int,
     head_line_cache: dict[Path, list[str] | None],
+    context: object,
 ) -> dict[Path, dict[int, WhitelistHit]]:
     hits: dict[Path, dict[int, WhitelistHit]] = {}
     for entry in entries:
         lines = head_line_cache.get(entry.document_path)
         if not lines:
             continue
-        result = score_entry(
+        result = call_with_context(
+            score_entry,
+            context,
             entry=entry,
             lines=lines,
-            alpha=alpha,
-            weight_line=weight_line,
-            weight_context=weight_context,
-            weight_glitch=weight_glitch,
-            tau=tau,
-            search_radius=search_radius,
-            context_radius=context_radius,
         )
         if not result.accepted:
             continue
@@ -429,13 +453,7 @@ def refresh_whitelist_entries(
     entries: Sequence[Entry],
     base_dir: Path,
     head_line_cache: dict[Path, list[str] | None],
-    alpha: float,
-    weight_line: float,
-    weight_context: float,
-    weight_glitch: float,
-    tau: float,
-    search_radius: int,
-    context_radius: int,
+    context: object,
 ) -> list[Entry]:
     refreshed: list[Entry] = []
     for entry in entries:
@@ -452,16 +470,11 @@ def refresh_whitelist_entries(
                 refreshed.append(entry)
             continue
 
-        result = score_entry(
+        result = call_with_context(
+            score_entry,
+            context,
             entry=entry,
             lines=lines,
-            alpha=alpha,
-            weight_line=weight_line,
-            weight_context=weight_context,
-            weight_glitch=weight_glitch,
-            tau=tau,
-            search_radius=search_radius,
-            context_radius=context_radius,
         )
         if not result.accepted:
             print(
@@ -738,13 +751,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             entries=whitelist_entries,
             base_dir=base_dir,
             head_line_cache=head_line_cache,
-            alpha=args.alpha,
-            weight_line=args.weight_line,
-            weight_context=args.weight_context,
-            weight_glitch=args.weight_glitch,
-            tau=args.tau,
-            search_radius=args.search_radius,
-            context_radius=args.context_radius,
+            context=args,
         )
     except ReviewAbort:
         print("aswritten: stopped by user")
@@ -761,14 +768,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     whitelist_hits = build_whitelist_hits(
         entries=whitelist_entries,
         base_dir=base_dir,
-        alpha=args.alpha,
-        weight_line=args.weight_line,
-        weight_context=args.weight_context,
-        weight_glitch=args.weight_glitch,
-        tau=args.tau,
-        search_radius=args.search_radius,
-        context_radius=args.context_radius,
         head_line_cache=head_line_cache,
+        context=args,
     )
 
     try:
